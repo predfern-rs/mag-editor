@@ -178,7 +178,6 @@ export function updateLinkAnchorText(
   linkMatch: LinkMatch,
   newAnchorText: string,
 ): string {
-  const newTag = `<a href="${linkMatch.href}">${newAnchorText}</a>`;
   // Rebuild tag preserving other attributes
   const tagWithNewText = linkMatch.fullTag.replace(
     />[\s\S]*?<\/a>/,

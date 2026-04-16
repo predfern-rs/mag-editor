@@ -241,10 +241,6 @@ export function PostEditorPage({ postIdOverride }: PostEditorPageProps) {
         isOpen={reviewOpen}
         onClose={() => setReviewOpen(false)}
         onConfirm={handleSave}
-        onDiscard={() => {
-          setEditedContent(null);
-          setReviewOpen(false);
-        }}
       />
 
       <ContentPreviewModal

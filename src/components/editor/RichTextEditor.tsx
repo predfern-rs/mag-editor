@@ -37,7 +37,7 @@ export function RichTextEditor({ html, onHtmlChange }: RichTextEditorProps) {
   // Sync external HTML changes (e.g. after save/refresh)
   useEffect(() => {
     if (editor && html !== editor.getHTML()) {
-      editor.commands.setContent(html, false);
+      editor.commands.setContent(html);
     }
   }, [html, editor]);
 

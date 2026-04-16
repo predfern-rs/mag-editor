@@ -8,7 +8,6 @@ import {
   updateLinkHref,
   updateLinkAnchorText,
   removeLink,
-  buildLink,
 } from '../../lib/find-replace';
 import type { Match, LinkMatch } from '../../lib/find-replace';
 

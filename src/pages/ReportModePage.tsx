@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AuditReport, LinkRecommendation } from '../lib/report-parser';
 import { ReportUpload } from '../components/report/ReportUpload';
