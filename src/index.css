@@ -1,0 +1,24 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+/* Custom styles for the editor */
+.content-preview a {
+  color: #2563eb;
+  text-decoration: underline;
+}
+.content-preview img {
+  max-width: 100%;
+  height: auto;
+}
+.match-highlight {
+  background-color: #fef08a;
+  padding: 1px 2px;
+  border-radius: 2px;
+}
+.diff-added {
+  background-color: #dcfce7;
+}
+.diff-removed {
+  background-color: #fecaca;
+  text-decoration: line-through;
+}
