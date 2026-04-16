@@ -16,6 +16,7 @@ interface ArticleRecommendationsProps {
   onTellMeWhere?: (rec: LinkRecommendation) => void;
   onFindPlacements?: (rec: LinkRecommendation) => PlacementOption[];
   onApplyAtPlacement?: (rec: LinkRecommendation, index: number, option: PlacementOption) => void;
+  onSendInstruction?: (instruction: string) => void;
   recommendationStatuses: Record<number, RecStatus>;
   onUpdateRecStatus: (index: number, status: 'applied' | 'skipped') => void;
   renderedHtml?: string;
@@ -61,6 +62,7 @@ export function ArticleRecommendations({
   onTellMeWhere,
   onFindPlacements,
   onApplyAtPlacement,
+  onSendInstruction,
   recommendationStatuses,
   onUpdateRecStatus,
   renderedHtml,
@@ -107,6 +109,29 @@ export function ArticleRecommendations({
             👁️ Preview Article
           </button>
         </div>
+
+        {/* Quick actions */}
+        {onSendInstruction && (
+          <div className="flex items-center gap-2 mt-3">
+            <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Shortcode:</span>
+            <button
+              onClick={() => onSendInstruction(
+                `Add a global carousel shortcode to this article. Insert the following block:\n\n<!-- wp:shortcode -->\n[global_carousel_people_list id="1"]\n<!-- /wp:shortcode -->\n\nPlace it [ABOVE / BELOW] this text from the article:\n[PASTE THE EXACT HEADING OR SENTENCE FROM THE ARTICLE WHERE YOU WANT IT]`
+              )}
+              className="px-2.5 py-1 text-[11px] font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-md hover:bg-purple-100 transition-colors"
+            >
+              + Add Carousel
+            </button>
+            <button
+              onClick={() => onSendInstruction(
+                `Remove the global carousel shortcode from this article. Find and remove the entire block:\n\n<!-- wp:shortcode -->\n[global_carousel_people_list id="1"]\n<!-- /wp:shortcode -->\n\nRemove it completely including the wp:shortcode block comments.`
+              )}
+              className="px-2.5 py-1 text-[11px] font-medium text-red-500 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-colors"
+            >
+              - Remove Carousel
+            </button>
+          </div>
+        )}
 
         {/* Badges */}
         <div className="flex flex-wrap items-center gap-2 mt-3">

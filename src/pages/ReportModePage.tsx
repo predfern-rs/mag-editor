@@ -20,6 +20,8 @@ type RecStatus = 'pending' | 'applied' | 'skipped';
 
 const LS_KEY_STATUSES = 'mag-editor-report-statuses';
 const LS_KEY_REC = 'mag-editor-rec-statuses';
+const LS_KEY_REPORT = 'mag-editor-saved-report';
+const LS_KEY_SELECTED = 'mag-editor-selected-article';
 
 function loadFromStorage<T>(key: string, fallback: T): T {
   try {
@@ -42,9 +44,17 @@ interface ReportModePageProps {
 export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportModePageProps) {
   const queryClient = useQueryClient();
   // ── Core state ──────────────────────────────────────────────────────
-  const [report, setReport] = useState<AuditReport | null>(null);
-  const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
+  const [report, setReport] = useState<AuditReport | null>(() =>
+    loadFromStorage(LS_KEY_REPORT, null),
+  );
+  const [selectedArticleId, setSelectedArticleId] = useState<string | null>(() =>
+    loadFromStorage(LS_KEY_SELECTED, null),
+  );
   const [summaryCollapsed, setSummaryCollapsed] = useState(false);
+
+  // Persist report and selected article
+  useEffect(() => { saveToStorage(LS_KEY_REPORT, report); }, [report]);
+  useEffect(() => { saveToStorage(LS_KEY_SELECTED, selectedArticleId); }, [selectedArticleId]);
 
   const [articleStatuses, setArticleStatuses] = useState<Record<string, ArticleStatus>>(() =>
     loadFromStorage(LS_KEY_STATUSES, {}),
@@ -166,6 +176,13 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
         setReviewOpen(false);
       },
     });
+  }
+
+  async function handleRevert() {
+    await revertToLastRevision(wpPostId);
+    setEditedContent(null);
+    setAppliedIndices(new Map());
+    await queryClient.invalidateQueries({ queryKey: ['post-content', wpPostId] });
   }
 
   const handleApplyRecommendation = useCallback(
@@ -304,7 +321,17 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setReport(null)}
+            onClick={() => {
+              if (!confirm('Upload a new report? This will clear all current progress.')) return;
+              setReport(null);
+              setSelectedArticleId(null);
+              setArticleStatuses({});
+              setRecStatuses({});
+              saveToStorage(LS_KEY_REPORT, null);
+              saveToStorage(LS_KEY_SELECTED, null);
+              saveToStorage(LS_KEY_STATUSES, {});
+              saveToStorage(LS_KEY_REC, {});
+            }}
             className="px-3 py-1.5 text-xs font-medium text-gray-500 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
           >
             Upload new report
@@ -389,6 +416,7 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
                       onTellMeWhere={handleTellMeWhere}
                       onFindPlacements={handleFindPlacements}
                       onApplyAtPlacement={handleApplyAtPlacement}
+                      onSendInstruction={setAiInstruction}
                       recommendationStatuses={recStatuses[selectedArticle.id] ?? {}}
                       onUpdateRecStatus={(index, status) =>
                         handleUpdateRecStatus(selectedArticle.id, index, status)
@@ -512,6 +540,7 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
           onSave={handleSave}
           onReview={() => setReviewOpen(true)}
           onReviewChanges={() => setDiffOpen(true)}
+          onRevert={handleRevert}
           onDiscard={() => {
             setEditedContent(null);
             setAppliedIndices(new Map());
