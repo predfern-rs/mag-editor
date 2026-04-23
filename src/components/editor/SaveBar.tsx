@@ -10,6 +10,8 @@ interface SaveBarProps {
   onDiscard?: () => void;
   lastSaved: Date | null;
   pendingCount?: number;
+  onOpusReview?: () => void;
+  opusReviewEnabled?: boolean;
 }
 
 function formatTime(date: Date): string {
@@ -30,6 +32,8 @@ export function SaveBar({
   onDiscard,
   lastSaved,
   pendingCount,
+  onOpusReview,
+  opusReviewEnabled,
 }: SaveBarProps) {
   const [isReverting, setIsReverting] = useState(false);
   const [revertMessage, setRevertMessage] = useState<string | null>(null);
@@ -91,6 +95,16 @@ export function SaveBar({
               title="Revert to previous WordPress revision"
             >
               {isReverting ? '⏳ Reverting...' : '↩️ Revert Last Change'}
+            </button>
+          )}
+          {onOpusReview && (
+            <button
+              onClick={onOpusReview}
+              disabled={!opusReviewEnabled}
+              className="px-3 py-2 text-xs font-semibold text-white bg-gradient-to-r from-purple-600 to-indigo-600 rounded-md hover:from-purple-700 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              title={opusReviewEnabled ? 'Minimal-change editorial polish preserving all locked links' : 'Apply at least one recommendation to enable'}
+            >
+              ✨ Mr Opus Review
             </button>
           )}
           {onReview && (

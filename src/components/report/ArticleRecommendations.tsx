@@ -6,11 +6,14 @@ import { ContentPreviewModal } from '../editor/ContentPreviewModal';
 import { getArticleUrls, detectSiteFromWpUrl } from '../../lib/url-mapping';
 import { getActiveSite } from '../../config';
 
-type RecStatus = 'pending' | 'applied' | 'skipped';
+type RecStatus = 'pending' | 'applied' | 'skipped' | 'needs-manual';
 
 interface ArticleRecommendationsProps {
   article: ArticleAudit;
   onApplyRecommendation: (rec: LinkRecommendation, index: number, keepText?: boolean) => void;
+  onApplyAll?: () => void;
+  applyAllSummary?: string | null;
+  onDismissApplyAllSummary?: () => void;
   onUndoRecommendation?: (index: number) => void;
   onPreviewChanges?: () => void;
   onTellMeWhere?: (rec: LinkRecommendation) => void;
@@ -58,6 +61,9 @@ const SECTIONS: SectionDef[] = [
 export function ArticleRecommendations({
   article,
   onApplyRecommendation,
+  onApplyAll,
+  applyAllSummary,
+  onDismissApplyAllSummary,
   onUndoRecommendation,
   onPreviewChanges,
   onTellMeWhere,
@@ -86,6 +92,18 @@ export function ArticleRecommendations({
     return result;
   }, [article.recommendations]);
 
+  // How many ADD/REMOVE recs are still pending (not applied, not skipped, not flagged as needs-manual).
+  const pendingApplyableCount = useMemo(
+    () =>
+      article.recommendations.reduce((count, rec, i) => {
+        if (rec.action === 'keep') return count;
+        const status = recommendationStatuses[i];
+        if (status === 'applied' || status === 'skipped' || status === 'needs-manual') return count;
+        return count + 1;
+      }, 0),
+    [article.recommendations, recommendationStatuses],
+  );
+
   return (
     <div className="space-y-5">
       {/* Article header */}
@@ -94,7 +112,7 @@ export function ArticleRecommendations({
           {article.title}
         </h2>
 
-        <div className="flex items-center gap-3 mt-2">
+        <div className="flex items-center gap-3 mt-2 flex-wrap">
           <a
             href={article.url}
             target="_blank"
@@ -110,7 +128,31 @@ export function ArticleRecommendations({
           >
             👁️ Preview Article
           </button>
+          {onApplyAll && pendingApplyableCount > 0 && (
+            <button
+              onClick={onApplyAll}
+              className="flex items-center gap-1 px-3 py-1 text-xs font-semibold text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors flex-shrink-0"
+              title="Apply every pending ADD and REMOVE recommendation in order"
+            >
+              ⚡ Apply all fixes ({pendingApplyableCount})
+            </button>
+          )}
         </div>
+
+        {applyAllSummary && (
+          <div className="mt-3 flex items-start justify-between gap-3 rounded-md bg-blue-50 border border-blue-200 px-3 py-2">
+            <p className="text-xs text-blue-800 leading-relaxed">{applyAllSummary}</p>
+            {onDismissApplyAllSummary && (
+              <button
+                onClick={onDismissApplyAllSummary}
+                className="text-[11px] text-blue-500 hover:text-blue-700 flex-shrink-0"
+                aria-label="Dismiss"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Quick actions */}
         {onSendInstruction && (

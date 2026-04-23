@@ -7,6 +7,14 @@ export interface ApplyResult {
 }
 
 /**
+ * When Strategy 3 finds a target paragraph, we prefer appending the new sentence
+ * to the end of that paragraph rather than emitting a standalone block — provided
+ * the resulting paragraph stays under this plain-text length. 600 chars is roughly
+ * a comfortable reading paragraph; beyond that, a new block reads cleaner.
+ */
+const MERGE_MAX_COMBINED_CHARS = 600;
+
+/**
  * Directly apply a recommendation to post content — no AI needed.
  * Analyses the recommendation's reason/context to find the right spot.
  */
@@ -452,6 +460,11 @@ function insertNearContext(rec: LinkRecommendation, content: string): ApplyResul
  * Find a paragraph in the content that mentions one of the context terms,
  * then insert the new sentence after it.
  * Tries headings first, then falls back to searching paragraph text.
+ *
+ * For each candidate paragraph we first attempt to *merge* the new sentence
+ * into the paragraph's existing <p>...</p>. If the paragraph is already long,
+ * or doesn't end in a sentence-terminal punctuation, we fall back to emitting
+ * a standalone new <!-- wp:paragraph --> block (original behaviour).
  */
 function insertNearParagraph(
   contextTerms: string[],
@@ -477,9 +490,22 @@ function insertNearParagraph(
 
       const lastParaEnd = sectionContent.lastIndexOf('<!-- /wp:paragraph -->');
       if (lastParaEnd >= 0) {
-        const insertAt = headingMatch.index + headingMatch[0].length + lastParaEnd + '<!-- /wp:paragraph -->'.length;
+        const paraEndGlobal = headingMatch.index + headingMatch[0].length + lastParaEnd + '<!-- /wp:paragraph -->'.length;
+        const paraStartGlobal = content.lastIndexOf('<!-- wp:paragraph -->', paraEndGlobal);
+
+        if (paraStartGlobal >= 0) {
+          const merged = tryMergeAtParagraphEnd(content, paraStartGlobal, paraEndGlobal, htmlSentence);
+          if (merged) {
+            return {
+              success: true,
+              modifiedContent: merged,
+              explanation: `Merged sentence into paragraph in "${term}" section: "${rec.anchor}" → ${rec.targetUrl}`,
+            };
+          }
+        }
+
         const newBlock = `\n\n<!-- wp:paragraph -->\n<p>${htmlSentence}</p>\n<!-- /wp:paragraph -->`;
-        const newContent = content.substring(0, insertAt) + newBlock + content.substring(insertAt);
+        const newContent = content.substring(0, paraEndGlobal) + newBlock + content.substring(paraEndGlobal);
 
         return {
           success: true,
@@ -506,9 +532,19 @@ function insertNearParagraph(
     const paraEndMatch = paraContent.match(/<\/p>\s*\n\s*<!-- \/wp:paragraph -->/);
     if (!paraEndMatch || paraEndMatch.index === undefined) continue;
 
-    const insertAt = paraStart + paraEndMatch.index + paraEndMatch[0].length;
+    const paraEndGlobal = paraStart + paraEndMatch.index + paraEndMatch[0].length;
+
+    const merged = tryMergeAtParagraphEnd(content, paraStart, paraEndGlobal, htmlSentence);
+    if (merged) {
+      return {
+        success: true,
+        modifiedContent: merged,
+        explanation: `Merged sentence into paragraph about "${term}": "${rec.anchor}" → ${rec.targetUrl}`,
+      };
+    }
+
     const newBlock = `\n\n<!-- wp:paragraph -->\n<p>${htmlSentence}</p>\n<!-- /wp:paragraph -->`;
-    const newContent = content.substring(0, insertAt) + newBlock + content.substring(insertAt);
+    const newContent = content.substring(0, paraEndGlobal) + newBlock + content.substring(paraEndGlobal);
 
     return {
       success: true,
@@ -518,6 +554,56 @@ function insertNearParagraph(
   }
 
   return null;
+}
+
+/**
+ * Try to append the new sentence into the <p>...</p> that spans
+ * [paraStart, paraEnd] in content. Returns the modified content, or null
+ * if the merge wouldn't read well (short final char, combined length over cap).
+ */
+export function tryMergeAtParagraphEnd(
+  content: string,
+  paraStart: number,
+  paraEnd: number,
+  htmlSentence: string,
+): string | null {
+  const block = content.substring(paraStart, paraEnd);
+
+  // Find the last </p> within the block.
+  const closingTagIdx = block.lastIndexOf('</p>');
+  if (closingTagIdx < 0) return null;
+
+  // Extract <p>...</p> inner HTML.
+  const openingTagMatch = block.match(/<p(?:\s[^>]*)?>/);
+  if (!openingTagMatch || openingTagMatch.index === undefined) return null;
+  const innerStart = openingTagMatch.index + openingTagMatch[0].length;
+  const innerHtml = block.substring(innerStart, closingTagIdx);
+
+  const existingPlain = stripHtml(innerHtml).trim();
+  if (existingPlain.length === 0) return null;
+
+  // Paragraph should end in a sentence-final punctuation mark. If it ends
+  // in a comma, colon, semicolon, or an open structure, merging reads badly.
+  const trailingChar = existingPlain.slice(-1);
+  if (!['.', '!', '?'].includes(trailingChar)) return null;
+
+  const newPlain = stripHtml(htmlSentence).trim();
+  if (newPlain.length === 0) return null;
+
+  // Length gate: combined plain-text paragraph shouldn't exceed the cap.
+  if (existingPlain.length + 1 + newPlain.length > MERGE_MAX_COMBINED_CHARS) return null;
+
+  const mergedInner = `${innerHtml.replace(/\s+$/, '')} ${htmlSentence}`;
+  const mergedBlock =
+    block.substring(0, innerStart) +
+    mergedInner +
+    block.substring(closingTagIdx);
+
+  return content.substring(0, paraStart) + mergedBlock + content.substring(paraEnd);
+}
+
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
 }
 
 // ── Placement suggestions ──────────────────────────────────────────

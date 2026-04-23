@@ -3,7 +3,7 @@ import type { LinkRecommendation } from '../../lib/report-parser';
 import type { PlacementOption } from '../../lib/smart-apply';
 import { PlacementPicker } from './PlacementPicker';
 
-type RecStatus = 'pending' | 'applied' | 'skipped';
+type RecStatus = 'pending' | 'applied' | 'skipped' | 'needs-manual';
 
 interface RecommendationCardProps {
   rec: LinkRecommendation;
@@ -83,6 +83,44 @@ export function RecommendationCard({
                 ↩ Undo
               </button>
             )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === 'needs-manual') {
+    return (
+      <div className="border-l-4 border-l-amber-400 rounded-lg bg-amber-50 border border-amber-200 p-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-amber-600">⚠</span>
+            <span className="text-xs font-medium text-amber-700">Needs manual placement</span>
+            {rec.anchor && (
+              <span className="text-xs text-amber-600/80 truncate">"{rec.anchor}"</span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5">
+            {onTellMeWhere && (
+              <button
+                onClick={onTellMeWhere}
+                className="px-2 py-1 text-[11px] font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 transition-colors"
+              >
+                Tell me where
+              </button>
+            )}
+            <button
+              onClick={() => onApply()}
+              className="px-2 py-1 text-[11px] font-medium text-green-600 bg-green-50 border border-green-200 rounded hover:bg-green-100 transition-colors"
+            >
+              Retry apply
+            </button>
+            <button
+              onClick={() => onUpdateStatus('skipped')}
+              className="text-[10px] text-gray-500 hover:underline"
+            >
+              Skip
+            </button>
           </div>
         </div>
       </div>

@@ -14,9 +14,13 @@ import { listPosts } from '../api/posts';
 import { getPostContent, revertToLastRevision } from '../api/content';
 import { applyRecommendation, findPlacementOptions, applyAtPlacement } from '../lib/smart-apply';
 import type { PlacementOption } from '../lib/smart-apply';
+import { OpusReviewModal } from '../components/report/OpusReviewModal';
+import { detectSiteFromWpUrl } from '../lib/url-mapping';
+import { getActiveSite } from '../config';
+import type { Brand } from '../api/opus-review';
 
 type ArticleStatus = 'not-started' | 'in-progress' | 'done';
-type RecStatus = 'pending' | 'applied' | 'skipped';
+type RecStatus = 'pending' | 'applied' | 'skipped' | 'needs-manual';
 
 const LS_KEY_STATUSES = 'mag-editor-report-statuses';
 const LS_KEY_REC = 'mag-editor-rec-statuses';
@@ -114,6 +118,10 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
   const [lastAppliedRec, setLastAppliedRec] = useState<LinkRecommendation | null>(null);
   // Track which recommendation indices have been applied + their keepText setting
   const [appliedIndices, setAppliedIndices] = useState<Map<number, boolean>>(new Map());
+  // Summary banner shown after "Apply all fixes" (e.g. "Applied 7 of 9. 2 need manual placement.")
+  const [applyAllSummary, setApplyAllSummary] = useState<string | null>(null);
+  // Mr Opus Review modal
+  const [opusModalOpen, setOpusModalOpen] = useState(false);
 
   const originalContent = contentData?.content.raw ?? '';
   const postTitle = contentData?.title.raw ?? selectedArticle?.title ?? '';
@@ -145,7 +153,42 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
     setReviewOpen(false);
     setAiInstruction(null);
     setAppliedIndices(new Map());
+    setApplyAllSummary(null);
+    setOpusModalOpen(false);
   }, [selectedArticleId]);
+
+  // Lock list for Mr Opus: all applied ADD anchors (+ hrefs) and KEEP links.
+  // REMOVE recs don't add locks (the whole point of that rec is the link leaves).
+  const opusLockedLinks = useMemo(() => {
+    if (!selectedArticle) return [];
+    const locks: Array<{ anchor: string; href: string }> = [];
+    selectedArticle.recommendations.forEach((rec, i) => {
+      if (rec.action === 'add' && appliedIndices.has(i) && rec.anchor && rec.targetUrl) {
+        locks.push({ anchor: rec.anchor, href: rec.targetUrl });
+      }
+      if (rec.action === 'keep' && rec.anchor && rec.targetUrl) {
+        locks.push({ anchor: rec.anchor, href: rec.targetUrl });
+      }
+    });
+    return locks;
+  }, [selectedArticle, appliedIndices]);
+
+  const opusBrand: Brand = useMemo(() => {
+    if (selectedArticle) {
+      const detected = detectSiteFromWpUrl(selectedArticle.url);
+      if (detected) {
+        if (detected.siteId === 'dope') return 'dope';
+        if (detected.siteId === 'montec') return 'montec';
+        if (detected.siteId === 'ridestore') return 'ridestore';
+      }
+    }
+    const active = getActiveSite().id;
+    if (active === 'dope') return 'dope';
+    if (active === 'montec') return 'montec';
+    return 'ridestore';
+  }, [selectedArticle]);
+
+  const opusReviewEnabled = appliedIndices.size > 0 && !!selectedArticle;
 
   // ── Handlers ───────────────────────────────────────────────────────
   function handleSelectArticle(id: string) {
@@ -219,6 +262,54 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
     },
     [currentContent, selectedArticleId, handleUpdateRecStatus],
   );
+
+  // Apply every pending ADD/REMOVE rec in order. Recs that can't be placed
+  // automatically are flagged as needs-manual instead of opening the AI chat
+  // (so the editor can deal with them after the batch completes).
+  const handleApplyAll = useCallback(() => {
+    if (!selectedArticle || !selectedArticleId) return;
+
+    let runningContent = currentContent;
+    const newAppliedIndices = new Map(appliedIndices);
+    const articleStatuses = { ...(recStatuses[selectedArticleId] ?? {}) };
+    let applied = 0;
+    let needsManual = 0;
+    let skipped = 0;
+
+    selectedArticle.recommendations.forEach((rec, idx) => {
+      if (rec.action === 'keep') return;
+      const existing = articleStatuses[idx];
+      if (existing === 'applied' || existing === 'skipped' || existing === 'needs-manual') return;
+
+      const keepText = false;
+      const result = applyRecommendation(rec, runningContent, keepText);
+      if (result.success) {
+        runningContent = result.modifiedContent;
+        newAppliedIndices.set(idx, keepText);
+        articleStatuses[idx] = 'applied';
+        applied += 1;
+      } else {
+        articleStatuses[idx] = 'needs-manual';
+        needsManual += 1;
+      }
+    });
+
+    // Count pre-existing skips for context in the summary.
+    Object.values(articleStatuses).forEach((s) => {
+      if (s === 'skipped') skipped += 1;
+    });
+
+    setEditedContent(null); // let useMemo rebuild from appliedIndices
+    setAppliedIndices(newAppliedIndices);
+    setRecStatuses((prev) => ({ ...prev, [selectedArticleId]: articleStatuses }));
+
+    const total = applied + needsManual;
+    const parts: string[] = [];
+    parts.push(`Applied ${applied} of ${total} pending.`);
+    if (needsManual > 0) parts.push(`${needsManual} need${needsManual === 1 ? 's' : ''} manual placement.`);
+    if (skipped > 0) parts.push(`${skipped} previously skipped.`);
+    setApplyAllSummary(parts.join(' '));
+  }, [selectedArticle, selectedArticleId, currentContent, appliedIndices, recStatuses]);
 
   // Undo a single recommendation
   const handleUndoRecommendation = useCallback(
@@ -411,6 +502,9 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
                     <ArticleRecommendations
                       article={selectedArticle}
                       onApplyRecommendation={handleApplyRecommendation}
+                      onApplyAll={handleApplyAll}
+                      applyAllSummary={applyAllSummary}
+                      onDismissApplyAllSummary={() => setApplyAllSummary(null)}
                       onUndoRecommendation={handleUndoRecommendation}
                       onPreviewChanges={() => setReviewOpen(true)}
                       onTellMeWhere={handleTellMeWhere}
@@ -541,6 +635,8 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
           onSave={handleSave}
           onReview={() => setReviewOpen(true)}
           onReviewChanges={() => setDiffOpen(true)}
+          onOpusReview={() => setOpusModalOpen(true)}
+          opusReviewEnabled={opusReviewEnabled}
           onRevert={handleRevert}
           onDiscard={() => {
             setEditedContent(null);
@@ -560,6 +656,31 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
               ? Object.values(recStatuses[selectedArticleId] ?? {}).filter((s) => s === 'applied').length
               : undefined
           }
+        />
+      )}
+
+      {selectedArticle && (
+        <OpusReviewModal
+          isOpen={opusModalOpen}
+          onClose={() => setOpusModalOpen(false)}
+          title={postTitle}
+          brand={opusBrand}
+          content={currentContent}
+          lockedLinks={opusLockedLinks}
+          articleId={selectedArticle.id}
+          onAccept={(reviewed) => {
+            setEditedContent(reviewed);
+          }}
+          onRecordReview={(entry) => {
+            try {
+              const raw = localStorage.getItem('mag-editor-opus-history');
+              const log = raw ? (JSON.parse(raw) as unknown[]) : [];
+              log.push({ ...entry, timestamp: new Date().toISOString() });
+              localStorage.setItem('mag-editor-opus-history', JSON.stringify(log.slice(-200)));
+            } catch {
+              /* ignore */
+            }
+          }}
         />
       )}
     </div>
