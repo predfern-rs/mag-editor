@@ -422,6 +422,7 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
                         handleUpdateRecStatus(selectedArticle.id, index, status)
                       }
                       renderedHtml={contentData?.content.rendered}
+                      wpPostId={wpPostId}
                     />
                   </div>
 

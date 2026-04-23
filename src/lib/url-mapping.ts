@@ -74,6 +74,14 @@ export interface ArticleUrls {
   wordpress: string;
 }
 
+// Map site IDs to WordPress base URLs for admin links
+const SITE_WP_ADMIN: Record<string, string> = {
+  staging: 'https://wordpress-1269845-4600687.cloudwaysapps.com',
+  ridestore: 'https://wordpress-1269845-4582241.cloudwaysapps.com',
+  dope: 'https://wordpress-1269845-4582242.cloudwaysapps.com',
+  montec: 'https://wordpress-1269845-4582243.cloudwaysapps.com',
+};
+
 /**
  * Get all URLs for an article given the site, language, slug, and WP post URL.
  */
@@ -82,14 +90,24 @@ export function getArticleUrls(
   lang: string,
   slug: string,
   wpUrl: string,
+  wpPostId?: number,
 ): ArticleUrls {
   const siteUrls = SITE_URL_MAP[siteId];
   const config = siteUrls?.[lang];
 
+  // Build wp-admin edit link if we have a post ID
+  let wordpress = wpUrl;
+  if (wpPostId && wpPostId > 0) {
+    const wpBase = SITE_WP_ADMIN[siteId];
+    if (wpBase) {
+      wordpress = `${wpBase}/wp-admin/post.php?post=${wpPostId}&action=edit`;
+    }
+  }
+
   return {
     netlify: config ? `${config.netlify}${slug}/` : null,
     live: config?.live ? `${config.live}${slug}/` : null,
-    wordpress: wpUrl,
+    wordpress,
   };
 }
 

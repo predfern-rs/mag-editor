@@ -20,6 +20,7 @@ interface ArticleRecommendationsProps {
   recommendationStatuses: Record<number, RecStatus>;
   onUpdateRecStatus: (index: number, status: 'applied' | 'skipped') => void;
   renderedHtml?: string;
+  wpPostId?: number;
 }
 
 interface SectionDef {
@@ -66,6 +67,7 @@ export function ArticleRecommendations({
   recommendationStatuses,
   onUpdateRecStatus,
   renderedHtml,
+  wpPostId,
 }: ArticleRecommendationsProps) {
   const [previewOpen, setPreviewOpen] = useState(false);
 
@@ -211,7 +213,7 @@ export function ArticleRecommendations({
           const detected = detectSiteFromWpUrl(article.url);
           const siteId = detected?.siteId || getActiveSite().id;
           const lang = detected?.lang || 'en';
-          return getArticleUrls(siteId, lang, slug, article.url);
+          return getArticleUrls(siteId, lang, slug, article.url, wpPostId);
         })()}
       />
     </div>
