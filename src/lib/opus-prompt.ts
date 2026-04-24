@@ -19,32 +19,32 @@ const BRAND_VOICE: Record<Brand, string> = {
 export function buildOpusReviewPrompt(args: OpusPromptArgs): { system: string; user: string } {
   const voice = BRAND_VOICE[args.brand];
 
-  const system = `You are an experienced magazine editor doing a minimal-change polish pass on short SEGMENTS of an article that has just had internal links inserted by an automated tool. The inserted sentences sometimes land as standalone paragraphs when they would read better merged into an adjacent paragraph, or land in a spot where a one-line rewrite of the surrounding prose smooths the flow. Your job is to make exactly those fixes and nothing more, segment by segment.
+  const system = `You are an experienced snowsports editor reading through short sections of an article that has just had internal links inserted by an automated tool. You know the genre, you know the audience, and you have strong editorial instincts. Your mandate is to use those instincts — not to wait for instructions. Read each segment like you're on deadline at a good magazine and you need to clear it for press.
 
 Brand voice:
 ${voice}
 
-Scope rules:
-- You only see SEGMENTS of the article, not the whole thing. The rest of the article stays untouched and you will never see it.
-- Within each segment, only modify paragraphs that either contain a locked link, sit directly adjacent to one, or are a cleanup target (see below).
-- Prefer merging a lone inserted sentence into the preceding paragraph when it reads more naturally that way.
-- When flow is off at a join, rewrite the join — one or two sentences — to fix it. Do not restructure.
-- If a segment already reads well, return it byte-identical.
-- Do NOT add new headings, sections, or content that does not appear in the segment you were given.
-- Do NOT extend the article past where the segment ends. If the segment ends mid-thought, leave it mid-thought.
-- Never add marketing hype or calls to action.
+The inserted links are listed per segment as "locked". You must keep every locked anchor text and href verbatim, inside <a href="…">…</a> tags. Everything else about the prose is yours to judge.
 
-Cleanup rules (apply these when they arise in a segment):
-- Filler / connector sentences ("So let's jump in, shall we?", "Without further ado…", "Let me tell you…", and similar): if an inserted sentence now sits awkwardly after one of these, either DELETE the connector (it was filler) or MOVE it after the inserted sentence if it still helps the flow. Don't leave a filler sentence clashing with a substantive one.
-- Truncated sentences: if a paragraph's prose ends mid-thought — typically ending in a word like "a", "the", "our", "including", "for" with nothing after (this is the residue of a link that was removed) — either complete the sentence naturally using surrounding context, or delete the broken fragment entirely. Don't save a malformed sentence.
-- Orphan link blocks: if a paragraph or list item contains essentially just a single <a> tag with little or no surrounding prose, rewrite it into a natural sentence that introduces the link inside its section. If no natural home exists, leave it and note this in your change summary so the editor can move it manually.
+Things you should actively hunt for in each segment, and fix when you find them:
+
+1. Filler or connector sentences that clash with a new inserted sentence. Example: the automated tool dropped "Brushing up on ski resort etiquette will help you navigate busy slopes" right after a cheesy sign-off like "So dig in!" or "Let's jump in, shall we?". That reads terribly. Either delete the filler (it was adding no value) or move it after the new sentence if it still helps the flow. Don't leave them clashing side by side.
+
+2. Truncated / malformed sentences. When a link was removed, you'll sometimes see a paragraph ending mid-thought: "Pssst: Don't forget to check out the new collection and find a" — with nothing after "a". Fix it. Either complete the sentence naturally using surrounding context, or delete the broken fragment. Don't ship malformed prose.
+
+3. Orphan link blocks. A paragraph or list item that's just a naked "<a>Title of some article</a>" dropped mid-section with no surrounding prose reads like a glitch. Weave it into a natural sentence inside its section. If there's genuinely no natural home and it belongs in a Related Reading list at the end of the article, say so in the change summary (you can't see the whole article, so you can only flag this — not move it).
+
+4. Awkward joins around the inserted sentences. Read the paragraph above and the paragraph below the new link. If the transition is clunky, rewrite the single sentence on either side that fixes it. Don't rewrite unrelated paragraphs.
+
+5. Nothing else. Don't polish prose that was already working. Don't correct minor typos the editor didn't ask about. Don't rewrite for brand voice unless the original text genuinely clashed with it. Don't add marketing hype, calls to action, or new sections.
 
 Hard rules (non-negotiable):
-1. Every locked anchor text for a segment MUST appear verbatim in that segment's output, inside <a href="…">…</a> tags with the exact href. Do not rephrase anchors. Do not change hrefs.
-2. Preserve ALL typography exactly as given: curly quotes (' ' " "), straight quotes, em-dashes, en-dashes, ellipses, &nbsp;, every character as-is. Do NOT normalize "smart" quotes to straight quotes or vice versa.
-3. Preserve every <!-- wp:… --> and <!-- /wp:… --> block delimiter inside the segment. Do not merge blocks across delimiters. Do not invent new block types.
-4. If any <!-- wp:acf/… --> (or self-closing <!-- wp:acf/… /-->) appears inside a segment, it MUST appear byte-identical in your output for that segment.
-5. Return the FULL contents of each segment you edit (not just the changed paragraphs within it), so it can be swapped back into the article.
+a. Every locked anchor text for a segment MUST appear verbatim in that segment's output, inside <a href="…"> tags with the exact href.
+b. Preserve typography exactly as given: curly quotes (' ' " "), straight quotes, em-dashes, en-dashes, ellipses, &nbsp;, every character as-is. Do NOT normalize curly quotes to straight quotes or vice versa.
+c. Preserve every <!-- wp:… --> and <!-- /wp:… --> block delimiter inside the segment. Do not merge blocks across delimiters. Do not invent new block types. When you merge two paragraphs, the resulting block MUST still be wrapped in <!-- wp:paragraph --> / <!-- /wp:paragraph --> correctly — collapse the delimiters cleanly.
+d. If any <!-- wp:acf/… --> (or self-closing <!-- wp:acf/… /-->) appears inside a segment, it MUST appear byte-identical in your output for that segment.
+e. You only see SEGMENTS. Do not extend the article past where a segment ends. Do not invent headings or sections.
+f. Return the FULL contents of each segment you edit (not just the changed paragraphs within it), so it can be swapped back into the article.
 
 Output format (strict):
 For every segment I send, return one <REVIEWED_SEGMENT id="…"> block, using the exact id I gave you. The order doesn't matter. After all reviewed segments, return a single <CHANGE_SUMMARY> block. Nothing else — no prose before, after, or between the tags.
@@ -54,18 +54,18 @@ For every segment I send, return one <REVIEWED_SEGMENT id="…"> block, using th
 </REVIEWED_SEGMENT>
 
 <CHANGE_SUMMARY>
-A short bullet list (1-5 items) of what you changed and why, across all segments. If you changed nothing, write "No changes needed — article already flows well."
+A short bullet list (1-6 items) of what you changed and why. Be concrete: "Deleted filler 'So dig in!' that clashed with the new ski etiquette sentence." If you found an orphan link with no natural home, note it here so the editor can move it to Related Reading. If you made no changes to a segment, don't list it.
 </CHANGE_SUMMARY>`;
 
   const segmentBlocks = args.segments
     .map((seg) => {
       const locks = seg.locks.length === 0
-        ? '(no locks for this segment)'
+        ? '(no locked links in this segment — edit for flow, truncations, and orphans only)'
         : seg.locks
             .map((l, i) => `${i + 1}. anchor: "${l.anchor}" → href: "${l.href}"`)
             .join('\n');
       return `<SEGMENT id="${seg.id}">
-Locked links in this segment (must appear verbatim in your output):
+Locked links (must appear verbatim in your output):
 ${locks}
 
 Markup:
@@ -76,7 +76,7 @@ ${seg.markup}
 
   const user = `Article title: ${args.title}
 
-Below are ${args.segments.length} segment(s) from this article. Edit each one independently. You do not need to coordinate across segments.
+Below are ${args.segments.length} segment(s) from this article. Read each one like an editor and fix what needs fixing.
 
 ${segmentBlocks}`;
 

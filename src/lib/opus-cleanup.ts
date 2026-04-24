@@ -23,7 +23,10 @@ export function findCleanupTargets(content: string): number[] {
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i]!;
     if (block.isAcf) continue;
-    if (block.type !== 'paragraph') continue;
+    // Include paragraph, heading, list-item, and quote as editable block types.
+    // Headings rarely truncate but occasionally an orphan-link paragraph is
+    // really a list item that was injected mid-article.
+    if (!['paragraph', 'list-item', 'quote'].includes(block.type)) continue;
 
     const plainText = stripHtmlAndEntities(block.innerContent);
     if (plainText.length === 0) continue;

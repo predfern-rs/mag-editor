@@ -20,7 +20,7 @@ describe('extractReviewSegments', () => {
     expect(segments).toEqual([]);
   });
 
-  it('finds a single target block and expands context by one on each side', () => {
+  it('finds a single target block and expands context by the requested radius', () => {
     const content = [
       para('Block A, no link.'),
       para('Block B, contains <a href="/guide">the guide</a> link.'),
@@ -28,9 +28,11 @@ describe('extractReviewSegments', () => {
       para('Block D, far away.'),
     ].join('\n\n');
 
-    const segments = extractReviewSegments(content, [
-      { anchor: 'the guide', href: '/guide' },
-    ]);
+    const segments = extractReviewSegments(
+      content,
+      [{ anchor: 'the guide', href: '/guide' }],
+      1,
+    );
 
     expect(segments).toHaveLength(1);
     expect(segments[0]!.id).toBe('s1');
@@ -39,6 +41,24 @@ describe('extractReviewSegments', () => {
     expect(segments[0]!.markup).toContain('Block C, no link.');
     expect(segments[0]!.markup).not.toContain('Block D, far away.');
     expect(segments[0]!.locks).toEqual([{ anchor: 'the guide', href: '/guide' }]);
+  });
+
+  it('default context radius pulls in more surrounding blocks for editorial context', () => {
+    const content = Array.from({ length: 8 }, (_, i) =>
+      i === 3
+        ? para('Target with <a href="/guide">the guide</a> link.')
+        : para(`Block ${i}.`),
+    ).join('\n\n');
+
+    const segments = extractReviewSegments(content, [
+      { anchor: 'the guide', href: '/guide' },
+    ]);
+
+    expect(segments).toHaveLength(1);
+    // Default radius of 3 should pull in blocks 0..6 around target at idx 3.
+    expect(segments[0]!.markup).toContain('Block 0.');
+    expect(segments[0]!.markup).toContain('Block 6.');
+    expect(segments[0]!.markup).not.toContain('Block 7.');
   });
 
   it('merges overlapping context ranges into a single segment', () => {
@@ -96,7 +116,7 @@ describe('extractReviewSegments', () => {
     expect(segments[0]!.markup).not.toContain('wp:acf/');
   });
 
-  it('produces multiple segments when targets are far apart', () => {
+  it('produces multiple segments when targets are far apart at radius 1', () => {
     const content = [
       para('A.'),
       para('B with <a href="/one">one</a>.'),
@@ -108,10 +128,14 @@ describe('extractReviewSegments', () => {
       para('G.'),
     ].join('\n\n');
 
-    const segments = extractReviewSegments(content, [
-      { anchor: 'one', href: '/one' },
-      { anchor: 'two', href: '/two' },
-    ]);
+    const segments = extractReviewSegments(
+      content,
+      [
+        { anchor: 'one', href: '/one' },
+        { anchor: 'two', href: '/two' },
+      ],
+      1,
+    );
 
     expect(segments).toHaveLength(2);
     expect(segments[0]!.markup).toContain('one');
@@ -154,10 +178,14 @@ describe('stitchReviewedSegments', () => {
       para('F.'),
     ].join('\n\n');
 
-    const segments = extractReviewSegments(content, [
-      { anchor: 'one', href: '/one' },
-      { anchor: 'two', href: '/two' },
-    ]);
+    const segments = extractReviewSegments(
+      content,
+      [
+        { anchor: 'one', href: '/one' },
+        { anchor: 'two', href: '/two' },
+      ],
+      1,
+    );
 
     const result = stitchReviewedSegments(content, segments, {
       [segments[0]!.id]: para('S1 replaced with <a href="/one">one</a>.'),

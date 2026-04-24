@@ -26,7 +26,7 @@ export interface ReviewSegment {
 export function extractReviewSegments(
   content: string,
   lockedLinks: Array<{ anchor: string; href: string }>,
-  contextRadius = 1,
+  contextRadius = 3,
   additionalTargets: number[] = [],
 ): ReviewSegment[] {
   if (lockedLinks.length === 0 && additionalTargets.length === 0) return [];
