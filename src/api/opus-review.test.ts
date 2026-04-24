@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractHeadingBlocks, validateLocks } from './opus-review';
+import { extractBoldLabelParagraphs, extractHeadingBlocks, validateLocks } from './opus-review';
 
 describe('extractHeadingBlocks', () => {
   it('extracts each heading block', () => {
@@ -70,5 +70,59 @@ describe('validateLocks', () => {
     const failures = validateLocks(original, reviewed, []);
     expect(failures).toHaveLength(1);
     expect(failures[0]!.type).toBe('heading');
+  });
+});
+
+describe('extractBoldLabelParagraphs', () => {
+  it('picks up a bold-only label paragraph used as a section heading', () => {
+    const content = `<!-- wp:paragraph -->\n<p><strong>Related Reading:</strong></p>\n<!-- /wp:paragraph -->`;
+    const labels = extractBoldLabelParagraphs(content);
+    expect(labels).toHaveLength(1);
+    expect(labels[0]).toContain('Related Reading');
+  });
+
+  it('picks up a label with trailing nbsp and colon outside the strong tag', () => {
+    const content = `<!-- wp:paragraph -->\n<p><strong>More from the mag</strong>:&nbsp;</p>\n<!-- /wp:paragraph -->`;
+    const labels = extractBoldLabelParagraphs(content);
+    expect(labels).toHaveLength(1);
+  });
+
+  it('does NOT treat a normal paragraph with inline bold as a label', () => {
+    const content = `<!-- wp:paragraph -->\n<p><strong>Pssst:</strong> Don\u2019t forget to grab your kit before winter hits.</p>\n<!-- /wp:paragraph -->`;
+    const labels = extractBoldLabelParagraphs(content);
+    expect(labels).toEqual([]);
+  });
+
+  it('does NOT treat a long bolded sentence as a label', () => {
+    const content = `<!-- wp:paragraph -->\n<p><strong>This is a rather long passage that should not be mistaken for a short label because it is clearly body copy set in bold for emphasis.</strong></p>\n<!-- /wp:paragraph -->`;
+    const labels = extractBoldLabelParagraphs(content);
+    expect(labels).toEqual([]);
+  });
+});
+
+describe('validateLocks — bold-label paragraphs', () => {
+  it('fires a label failure when a Related Reading label is dropped', () => {
+    const original = `
+<!-- wp:paragraph -->
+<p><strong>Related Reading:</strong></p>
+<!-- /wp:paragraph -->
+
+<!-- wp:list -->
+<ul><!-- wp:list-item --><li><a href="/x">Indoor skiing guide</a></li><!-- /wp:list-item --></ul>
+<!-- /wp:list -->
+`.trim();
+
+    const reviewed = `
+<!-- wp:list -->
+<ul><!-- wp:list-item --><li><a href="/x">Indoor skiing guide</a></li><!-- /wp:list-item --></ul>
+<!-- /wp:list -->
+`.trim();
+
+    const failures = validateLocks(original, reviewed, [
+      { anchor: 'Indoor skiing guide', href: '/x' },
+    ]);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]!.type).toBe('label');
+    expect(failures[0]!.value).toBe('Related Reading:');
   });
 });

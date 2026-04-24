@@ -46,6 +46,7 @@ b. Preserve typography exactly as given: curly quotes (' ' " "), straight quotes
 c. Preserve every <!-- wp:… --> and <!-- /wp:… --> block delimiter inside the segment. Do not merge blocks across delimiters. Do not invent new block types. When you merge two paragraphs, the resulting block MUST still be wrapped in <!-- wp:paragraph --> / <!-- /wp:paragraph --> correctly — collapse the delimiters cleanly.
 d. If any <!-- wp:acf/… --> (or self-closing <!-- wp:acf/… /-->) appears inside a segment, it MUST appear byte-identical in your output for that segment.
 d2. NEVER delete or alter a <!-- wp:heading -->…<!-- /wp:heading --> block. Headings are structural anchors of the article. Even if the content under a heading has shrunk (e.g. a "Related Reading" list with only one link left), the heading stays. The only acceptable change to a heading block is none.
+d3. Some older articles use a bold-only paragraph as a section label instead of a real heading — e.g. a single paragraph block whose content is just "<strong>Related Reading:</strong>". Treat these EXACTLY like headings: never delete, never alter, never merge into surrounding prose. If the paragraph's only visible content is one <strong>, <b>, or <em> tag (optionally with a trailing colon), it's a structural label, not body copy.
 e. You only see SEGMENTS. Do not extend the article past where a segment ends. Do not invent headings or sections.
 f. Return the FULL contents of each segment you edit (not just the changed paragraphs within it), so it can be swapped back into the article.
 

@@ -31,7 +31,8 @@ export type LockFailure =
   | { type: 'anchor'; value: string }
   | { type: 'href'; value: string }
   | { type: 'acf'; value: string }
-  | { type: 'heading'; value: string };
+  | { type: 'heading'; value: string }
+  | { type: 'label'; value: string };
 
 export interface OpusReviewResponse {
   /** Full article content with reviewed segments stitched back in. */
@@ -197,6 +198,14 @@ export function validateLocks(
     }
   }
 
+  const originalLabels = extractBoldLabelParagraphs(originalContent);
+  const reviewedLabels = extractBoldLabelParagraphs(reviewedContent);
+  for (const block of originalLabels) {
+    if (!reviewedLabels.includes(block)) {
+      failures.push({ type: 'label', value: labelTitle(block) });
+    }
+  }
+
   return failures;
 }
 
@@ -218,6 +227,49 @@ function headingTitle(block: string): string {
   const m = block.match(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i);
   if (!m) return firstLine(block);
   return m[1]!.replace(/<[^>]+>/g, '').trim();
+}
+
+/**
+ * Find "bold-only label" paragraphs — `<!-- wp:paragraph -->` blocks whose
+ * prose is essentially just a <strong>/<b>/<em> tag acting as a section
+ * label (e.g. `<strong>Related Reading:</strong>`). In a lot of older
+ * content these stand in for real <h*> headings and Mr Opus has been
+ * deleting them when the content under them shrinks.
+ */
+export function extractBoldLabelParagraphs(content: string): string[] {
+  const blocks: string[] = [];
+  const re = /<!--\s*wp:paragraph[^>]*-->[\s\S]*?<!--\s*\/wp:paragraph\s*-->/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    const block = m[0];
+    if (isBoldLabelParagraph(block)) blocks.push(block);
+  }
+  return blocks;
+}
+
+function isBoldLabelParagraph(block: string): boolean {
+  const pInner = block.match(/<p(?:\s[^>]*)?>([\s\S]*?)<\/p>/i);
+  if (!pInner) return false;
+  const innerHtml = pInner[1]!;
+
+  const plain = innerHtml
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // Short text — labels are typically 1-6 words, not paragraphs.
+  if (plain.length === 0 || plain.length > 80) return false;
+
+  // The visible content is structurally just one emphasis tag
+  // (<strong>, <b>, or <em>) optionally followed by punctuation / nbsp.
+  const clean = innerHtml.replace(/&nbsp;/g, ' ').trim();
+  return /^<(strong|b|em)>[\s\S]+<\/\1>[\s:.,]*$/i.test(clean);
+}
+
+function labelTitle(block: string): string {
+  const m = block.match(/<(strong|b|em)>([\s\S]*?)<\/\1>/i);
+  if (!m) return firstLine(block);
+  return m[2]!.replace(/<[^>]+>/g, '').trim();
 }
 
 function extractTagged(raw: string, tag: string): string | null {
