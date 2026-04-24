@@ -4,6 +4,7 @@ import {
   stitchReviewedSegments,
   type ReviewSegment,
 } from '../lib/opus-segments';
+import { findCleanupTargets } from '../lib/opus-cleanup';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -52,13 +53,14 @@ export async function runOpusReview(req: OpusReviewRequest): Promise<OpusReviewR
   const model: OpusModel = req.model ?? 'opus-4';
   const route = MODEL_ROUTES[model];
 
-  const segments = extractReviewSegments(req.content, req.lockedLinks);
+  const cleanupTargets = findCleanupTargets(req.content);
+  const segments = extractReviewSegments(req.content, req.lockedLinks, 1, cleanupTargets);
   if (segments.length === 0) {
-    // Nothing to review — locked links aren't in editable blocks, or there
-    // are no locks at all.  Return the article unchanged.
+    // Nothing to review — locked links aren't in editable blocks, no cleanup
+    // targets either.  Return the article unchanged.
     return {
       reviewedContent: req.content,
-      changeSummary: 'No editable segments contain locked links — nothing to review.',
+      changeSummary: 'No editable segments contain locked links or cleanup targets — nothing to review.',
       modelUsed: route,
       lockFailures: [],
       usage: { input_tokens: 0, output_tokens: 0 },

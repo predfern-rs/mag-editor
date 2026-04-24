@@ -27,14 +27,15 @@ export function extractReviewSegments(
   content: string,
   lockedLinks: Array<{ anchor: string; href: string }>,
   contextRadius = 1,
+  additionalTargets: number[] = [],
 ): ReviewSegment[] {
-  if (lockedLinks.length === 0) return [];
+  if (lockedLinks.length === 0 && additionalTargets.length === 0) return [];
 
   const blocks = parseBlocks(content);
   if (blocks.length === 0) return [];
 
   // Target blocks: contain a locked anchor or href, and aren't ACF.
-  const targets: number[] = [];
+  const targetSet = new Set<number>();
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i]!;
     if (block.isAcf) continue;
@@ -43,12 +44,20 @@ export function extractReviewSegments(
         (lock.anchor && block.fullMarkup.includes(lock.anchor)) ||
         (lock.href && block.fullMarkup.includes(lock.href))
       ) {
-        targets.push(i);
+        targetSet.add(i);
         break;
       }
     }
   }
 
+  // Additional targets (cleanup hints from opus-cleanup). Filter ACF and OOB.
+  for (const idx of additionalTargets) {
+    if (idx < 0 || idx >= blocks.length) continue;
+    if (blocks[idx]!.isAcf) continue;
+    targetSet.add(idx);
+  }
+
+  const targets = [...targetSet].sort((a, b) => a - b);
   if (targets.length === 0) return [];
 
   // Expand each target by contextRadius, stopping expansion at ACF blocks

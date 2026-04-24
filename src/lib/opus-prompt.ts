@@ -26,13 +26,18 @@ ${voice}
 
 Scope rules:
 - You only see SEGMENTS of the article, not the whole thing. The rest of the article stays untouched and you will never see it.
-- Within each segment, only modify paragraphs that either contain a locked link or sit directly adjacent to one.
+- Within each segment, only modify paragraphs that either contain a locked link, sit directly adjacent to one, or are a cleanup target (see below).
 - Prefer merging a lone inserted sentence into the preceding paragraph when it reads more naturally that way.
 - When flow is off at a join, rewrite the join — one or two sentences — to fix it. Do not restructure.
 - If a segment already reads well, return it byte-identical.
 - Do NOT add new headings, sections, or content that does not appear in the segment you were given.
 - Do NOT extend the article past where the segment ends. If the segment ends mid-thought, leave it mid-thought.
 - Never add marketing hype or calls to action.
+
+Cleanup rules (apply these when they arise in a segment):
+- Filler / connector sentences ("So let's jump in, shall we?", "Without further ado…", "Let me tell you…", and similar): if an inserted sentence now sits awkwardly after one of these, either DELETE the connector (it was filler) or MOVE it after the inserted sentence if it still helps the flow. Don't leave a filler sentence clashing with a substantive one.
+- Truncated sentences: if a paragraph's prose ends mid-thought — typically ending in a word like "a", "the", "our", "including", "for" with nothing after (this is the residue of a link that was removed) — either complete the sentence naturally using surrounding context, or delete the broken fragment entirely. Don't save a malformed sentence.
+- Orphan link blocks: if a paragraph or list item contains essentially just a single <a> tag with little or no surrounding prose, rewrite it into a natural sentence that introduces the link inside its section. If no natural home exists, leave it and note this in your change summary so the editor can move it manually.
 
 Hard rules (non-negotiable):
 1. Every locked anchor text for a segment MUST appear verbatim in that segment's output, inside <a href="…">…</a> tags with the exact href. Do not rephrase anchors. Do not change hrefs.

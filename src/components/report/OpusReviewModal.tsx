@@ -16,6 +16,16 @@ interface OpusReviewModalProps {
   lockedLinks: Array<{ anchor: string; href: string }>;
   /** Called when the editor accepts Mr Opus's version. */
   onAccept: (reviewedContent: string) => void;
+  /**
+   * Called when the editor chooses to accept Mr Opus's output even though
+   * some locked links got dropped, and wants the recs behind those links
+   * flipped back to "needs-manual" for retry. If unset, the "re-flag" button
+   * isn't shown.
+   */
+  onAcceptReflagDropped?: (
+    reviewedContent: string,
+    dropped: Array<{ anchor?: string; href?: string }>,
+  ) => void;
   /** Called to record a review attempt for the local telemetry log. */
   onRecordReview?: (entry: {
     articleId: string;
@@ -36,6 +46,7 @@ export function OpusReviewModal({
   content,
   lockedLinks,
   onAccept,
+  onAcceptReflagDropped,
   onRecordReview,
   articleId,
 }: OpusReviewModalProps) {
@@ -85,6 +96,25 @@ export function OpusReviewModal({
       lockFailures: result.lockFailures.length,
     });
     onAccept(result.reviewedContent);
+    handleClose();
+  }
+
+  function handleAcceptReflagDropped() {
+    if (!result || !onAcceptReflagDropped) return;
+    const dropped: Array<{ anchor?: string; href?: string }> = [];
+    for (const f of result.lockFailures) {
+      if (f.type === 'anchor') dropped.push({ anchor: f.value });
+      else if (f.type === 'href') dropped.push({ href: f.value });
+    }
+    onRecordReview?.({
+      articleId,
+      model: result.modelUsed,
+      tokensIn: result.usage.input_tokens,
+      tokensOut: result.usage.output_tokens,
+      accepted: true,
+      lockFailures: result.lockFailures.length,
+    });
+    onAcceptReflagDropped(result.reviewedContent, dropped);
     handleClose();
   }
 
@@ -156,6 +186,7 @@ export function OpusReviewModal({
                 onViewDiff={() => setShowDiff(true)}
                 onViewPreview={() => setShowPreview(true)}
                 onAccept={handleAccept}
+                onAcceptReflagDropped={onAcceptReflagDropped ? handleAcceptReflagDropped : undefined}
                 onReject={handleReject}
               />
             )}
@@ -299,10 +330,17 @@ function ReviewingView(props: {
   onViewDiff: () => void;
   onViewPreview: () => void;
   onAccept: () => void;
+  onAcceptReflagDropped?: () => void;
   onReject: () => void;
 }) {
   const hasFailures = props.lockFailures.length > 0;
   const canAccept = !hasFailures || props.acknowledgeLockFailures;
+
+  // Dropped "links" = anchor and href failures (one broken link often emits both).
+  const droppedLinkFailures = props.lockFailures.filter(
+    (f) => f.type === 'anchor' || f.type === 'href',
+  ).length;
+  const hasAcfFailures = props.lockFailures.some((f) => f.type === 'acf');
   const noop =
     props.result.segmentsReviewed === 0 ||
     props.result.changeSummary.toLowerCase().includes('no changes needed');
@@ -343,8 +381,10 @@ function ReviewingView(props: {
             ))}
           </ul>
           <p className="text-[11px] text-red-600 mt-2 leading-relaxed">
-            Accepting anyway will save content that drops one or more locked anchors, hrefs,
-            or ACF blocks. Usually the right move is Reject.
+            Accepting anyway will save content that drops {droppedLinkFailures > 0 ? 'one or more links' : ''}
+            {droppedLinkFailures > 0 && hasAcfFailures ? ' and ' : ''}
+            {hasAcfFailures ? 'one or more ACF blocks' : ''}
+            . Usually the right move is Reject, or use "Accept & re-flag dropped" to save the polish and retry the dropped links manually.
           </p>
           {!props.acknowledgeLockFailures && (
             <button
@@ -374,13 +414,22 @@ function ReviewingView(props: {
             Diff
           </button>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap justify-end">
           <button
             onClick={props.onReject}
             className="px-3 py-2 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
           >
             Reject
           </button>
+          {hasFailures && droppedLinkFailures > 0 && props.onAcceptReflagDropped && (
+            <button
+              onClick={props.onAcceptReflagDropped}
+              className="px-3 py-2 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-300 rounded-md hover:bg-amber-100"
+              title="Save Mr Opus's edits; flip the recs behind dropped links back to needs-manual so you can retry them individually."
+            >
+              Accept & re-flag dropped
+            </button>
+          )}
           <button
             onClick={props.onAccept}
             disabled={!canAccept}

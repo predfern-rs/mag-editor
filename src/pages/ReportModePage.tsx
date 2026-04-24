@@ -671,6 +671,30 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
           onAccept={(reviewed) => {
             setEditedContent(reviewed);
           }}
+          onAcceptReflagDropped={(reviewed, dropped) => {
+            setEditedContent(reviewed);
+            if (!selectedArticleId) return;
+            // Find rec indices whose anchor or targetUrl matches any dropped item.
+            const dropAnchors = new Set(dropped.map((d) => d.anchor).filter(Boolean));
+            const dropHrefs = new Set(dropped.map((d) => d.href).filter(Boolean));
+            const newApplied = new Map(appliedIndices);
+            setRecStatuses((prev) => {
+              const articleRecs = { ...(prev[selectedArticleId] ?? {}) };
+              selectedArticle.recommendations.forEach((rec, i) => {
+                if (!newApplied.has(i)) return;
+                if (rec.action !== 'add') return;
+                const matched =
+                  (rec.anchor && dropAnchors.has(rec.anchor)) ||
+                  (rec.targetUrl && dropHrefs.has(rec.targetUrl));
+                if (matched) {
+                  articleRecs[i] = 'needs-manual';
+                  newApplied.delete(i);
+                }
+              });
+              return { ...prev, [selectedArticleId]: articleRecs };
+            });
+            setAppliedIndices(newApplied);
+          }}
           onRecordReview={(entry) => {
             try {
               const raw = localStorage.getItem('mag-editor-opus-history');
