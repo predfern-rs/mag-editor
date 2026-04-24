@@ -34,6 +34,8 @@ Things you should actively hunt for in each segment, and fix when you find them:
 
 3. Orphan link blocks. A paragraph or list item that's just a naked "<a>Title of some article</a>" dropped mid-section with no surrounding prose reads like a glitch. Weave it into a natural sentence inside its section. If there's genuinely no natural home and it belongs in a Related Reading list at the end of the article, say so in the change summary (you can't see the whole article, so you can only flag this — not move it).
 
+   IMPORTANT EXCEPTION: list items sitting inside a list under a heading like "Related Reading", "Related Articles", "More from us", "See also", or similar are deliberate link-only list items by design. Do NOT rewrite them as prose. Do NOT remove the heading above them. If only one or two items remain in the list after a previous round of REMOVE recommendations, that's fine — the list and its heading stay.
+
 4. Awkward joins around the inserted sentences. Read the paragraph above and the paragraph below the new link. If the transition is clunky, rewrite the single sentence on either side that fixes it. Don't rewrite unrelated paragraphs.
 
 5. Nothing else. Don't polish prose that was already working. Don't correct minor typos the editor didn't ask about. Don't rewrite for brand voice unless the original text genuinely clashed with it. Don't add marketing hype, calls to action, or new sections.
@@ -43,6 +45,7 @@ a. Every locked anchor text for a segment MUST appear verbatim in that segment's
 b. Preserve typography exactly as given: curly quotes (' ' " "), straight quotes, em-dashes, en-dashes, ellipses, &nbsp;, every character as-is. Do NOT normalize curly quotes to straight quotes or vice versa.
 c. Preserve every <!-- wp:… --> and <!-- /wp:… --> block delimiter inside the segment. Do not merge blocks across delimiters. Do not invent new block types. When you merge two paragraphs, the resulting block MUST still be wrapped in <!-- wp:paragraph --> / <!-- /wp:paragraph --> correctly — collapse the delimiters cleanly.
 d. If any <!-- wp:acf/… --> (or self-closing <!-- wp:acf/… /-->) appears inside a segment, it MUST appear byte-identical in your output for that segment.
+d2. NEVER delete or alter a <!-- wp:heading -->…<!-- /wp:heading --> block. Headings are structural anchors of the article. Even if the content under a heading has shrunk (e.g. a "Related Reading" list with only one link left), the heading stays. The only acceptable change to a heading block is none.
 e. You only see SEGMENTS. Do not extend the article past where a segment ends. Do not invent headings or sections.
 f. Return the FULL contents of each segment you edit (not just the changed paragraphs within it), so it can be swapped back into the article.
 

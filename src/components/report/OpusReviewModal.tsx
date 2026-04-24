@@ -341,6 +341,7 @@ function ReviewingView(props: {
     (f) => f.type === 'anchor' || f.type === 'href',
   ).length;
   const hasAcfFailures = props.lockFailures.some((f) => f.type === 'acf');
+  const hasHeadingFailures = props.lockFailures.some((f) => f.type === 'heading');
   const noop =
     props.result.segmentsReviewed === 0 ||
     props.result.changeSummary.toLowerCase().includes('no changes needed');
@@ -381,10 +382,17 @@ function ReviewingView(props: {
             ))}
           </ul>
           <p className="text-[11px] text-red-600 mt-2 leading-relaxed">
-            Accepting anyway will save content that drops {droppedLinkFailures > 0 ? 'one or more links' : ''}
-            {droppedLinkFailures > 0 && hasAcfFailures ? ' and ' : ''}
-            {hasAcfFailures ? 'one or more ACF blocks' : ''}
-            . Usually the right move is Reject, or use "Accept & re-flag dropped" to save the polish and retry the dropped links manually.
+            Accepting anyway will save content that drops{' '}
+            {[
+              droppedLinkFailures > 0 ? 'one or more links' : null,
+              hasAcfFailures ? 'one or more ACF blocks' : null,
+              hasHeadingFailures ? 'one or more section headings' : null,
+            ]
+              .filter(Boolean)
+              .join(' and ')}
+            . {hasHeadingFailures
+              ? 'Heading drops are usually structural mistakes (e.g. a "Related Reading" subheading deleted because the list shrank). Reject is almost always the right move.'
+              : 'Usually the right move is Reject, or use "Accept & re-flag dropped" to save the polish and retry the dropped links manually.'}
           </p>
           {!props.acknowledgeLockFailures && (
             <button

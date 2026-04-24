@@ -30,7 +30,8 @@ export interface OpusReviewRequest {
 export type LockFailure =
   | { type: 'anchor'; value: string }
   | { type: 'href'; value: string }
-  | { type: 'acf'; value: string };
+  | { type: 'acf'; value: string }
+  | { type: 'heading'; value: string };
 
 export interface OpusReviewResponse {
   /** Full article content with reviewed segments stitched back in. */
@@ -188,7 +189,35 @@ export function validateLocks(
     }
   }
 
+  const originalHeadings = extractHeadingBlocks(originalContent);
+  const reviewedHeadings = extractHeadingBlocks(reviewedContent);
+  for (const block of originalHeadings) {
+    if (!reviewedHeadings.includes(block)) {
+      failures.push({ type: 'heading', value: headingTitle(block) });
+    }
+  }
+
   return failures;
+}
+
+/**
+ * Extract every <!-- wp:heading -->…<!-- /wp:heading --> block from content.
+ * Headings define article structure and Mr Opus must never alter them.
+ */
+export function extractHeadingBlocks(content: string): string[] {
+  const blocks: string[] = [];
+  const re = /<!--\s*wp:heading[^>]*-->[\s\S]*?<!--\s*\/wp:heading\s*-->/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    blocks.push(m[0]);
+  }
+  return blocks;
+}
+
+function headingTitle(block: string): string {
+  const m = block.match(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i);
+  if (!m) return firstLine(block);
+  return m[1]!.replace(/<[^>]+>/g, '').trim();
 }
 
 function extractTagged(raw: string, tag: string): string | null {
