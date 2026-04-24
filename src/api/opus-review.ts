@@ -4,7 +4,8 @@ import {
   stitchReviewedSegments,
   type ReviewSegment,
 } from '../lib/opus-segments';
-import { findCleanupTargets } from '../lib/opus-cleanup';
+import { findCleanupTargets, isRelatedReadingLabelText, isShopCalloutHeadingText } from '../lib/opus-cleanup';
+import { parseBlocks } from '../lib/block-parser';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -32,7 +33,8 @@ export type LockFailure =
   | { type: 'href'; value: string }
   | { type: 'acf'; value: string }
   | { type: 'heading'; value: string }
-  | { type: 'label'; value: string };
+  | { type: 'label'; value: string }
+  | { type: 'new-block'; value: string };
 
 export interface OpusReviewResponse {
   /** Full article content with reviewed segments stitched back in. */
@@ -193,19 +195,167 @@ export function validateLocks(
   const originalHeadings = extractHeadingBlocks(originalContent);
   const reviewedHeadings = extractHeadingBlocks(reviewedContent);
   for (const block of originalHeadings) {
-    if (!reviewedHeadings.includes(block)) {
-      failures.push({ type: 'heading', value: headingTitle(block) });
-    }
+    if (reviewedHeadings.includes(block)) continue;
+    if (isAllowedRelatedReadingDrop(block, originalContent, reviewedContent)) continue;
+    if (isAllowedShopCalloutDrop(block, originalContent, reviewedContent)) continue;
+    failures.push({ type: 'heading', value: headingTitle(block) });
   }
 
   const originalLabels = extractBoldLabelParagraphs(originalContent);
   const reviewedLabels = extractBoldLabelParagraphs(reviewedContent);
   for (const block of originalLabels) {
-    if (!reviewedLabels.includes(block)) {
-      failures.push({ type: 'label', value: labelTitle(block) });
+    if (reviewedLabels.includes(block)) continue;
+    if (isAllowedRelatedReadingDrop(block, originalContent, reviewedContent)) continue;
+    failures.push({ type: 'label', value: labelTitle(block) });
+  }
+
+  failures.push(...validateNoNewBlockTypes(originalContent, reviewedContent));
+
+  return failures;
+}
+
+/**
+ * True when a dropped heading/label block was a "Related Reading"-style
+ * section marker whose adjacent list has also been dropped (or reduced to
+ * zero link items). In that case Mr Opus correctly cleaned up a dangling
+ * section rather than orphaning the heading above a dead list.
+ *
+ * Mirrors findDanglingRelatedReadingPairs in opus-cleanup: we check the
+ * list that sat next to this heading in the ORIGINAL, and if it's gone or
+ * empty-of-links in the REVIEWED, the heading drop is allowed.
+ */
+function isAllowedRelatedReadingDrop(
+  droppedBlock: string,
+  originalContent: string,
+  reviewedContent: string,
+): boolean {
+  const labelText = extractLabelTextFromBlock(droppedBlock);
+  if (!labelText || !isRelatedReadingLabelText(labelText)) return false;
+
+  const originalBlocks = parseBlocks(originalContent);
+  const droppedStart = originalContent.indexOf(droppedBlock);
+  if (droppedStart < 0) return false;
+  const headingIdx = originalBlocks.findIndex((b) => b.startIndex === droppedStart);
+  if (headingIdx < 0) return false;
+
+  // Find the list block that sat next to this heading in the original.
+  let originalList: (typeof originalBlocks)[number] | null = null;
+  for (let j = headingIdx + 1; j < originalBlocks.length; j++) {
+    const next = originalBlocks[j]!;
+    if (next.isAcf) continue;
+    if (next.type === 'list') originalList = next;
+    break;
+  }
+
+  // Exemption only applies to the "heading + collapsed list dropped together"
+  // case. If there's no adjacent list, a Related Reading heading standing
+  // alone is a plain structural marker; modifying or dropping it is a failure.
+  if (!originalList) return false;
+
+  // Heading + list both absent from reviewed → Mr Opus cleaned up the
+  // dangling section as intended. Exempt.
+  return !reviewedContent.includes(originalList.fullMarkup);
+}
+
+/**
+ * True when a dropped heading block was a shop-callout heading and the
+ * section beneath it (up to the next heading or separator) contains no
+ * shop-promoting content in the reviewed output. Every paragraph in that
+ * original section must be either dropped from reviewed, or kept but
+ * containing no shop links (i.e. it wasn't actually promotional copy).
+ *
+ * This scans the whole section, not just the adjacent block, because
+ * user-inserted ADDs or intervening blocks can sit between the heading
+ * and the promo paragraph.
+ */
+function isAllowedShopCalloutDrop(
+  droppedBlock: string,
+  originalContent: string,
+  reviewedContent: string,
+): boolean {
+  const labelText = extractLabelTextFromBlock(droppedBlock);
+  if (!labelText || !isShopCalloutHeadingText(labelText)) return false;
+
+  const originalBlocks = parseBlocks(originalContent);
+  const droppedStart = originalContent.indexOf(droppedBlock);
+  if (droppedStart < 0) return false;
+  const headingIdx = originalBlocks.findIndex((b) => b.startIndex === droppedStart);
+  if (headingIdx < 0) return false;
+
+  // Walk forward until we hit the next heading or separator — that's the
+  // boundary of this heading's section. Collect every paragraph we pass.
+  const sectionParagraphs: (typeof originalBlocks)[number][] = [];
+  for (let j = headingIdx + 1; j < originalBlocks.length; j++) {
+    const next = originalBlocks[j]!;
+    if (next.isAcf) continue;
+    if (
+      next.type === 'heading' ||
+      next.type === 'core/heading' ||
+      next.type === 'separator' ||
+      next.type === 'core/separator'
+    ) {
+      break;
+    }
+    if (next.type === 'paragraph' || next.type === 'core/paragraph') {
+      sectionParagraphs.push(next);
     }
   }
 
+  // Heading with no body in the original — dropping it alone is trivially fine.
+  if (sectionParagraphs.length === 0) return true;
+
+  const shopUrlRe = /ridestore\.com\/(?:[a-z]{2}|intl)\/[a-z0-9-]+/i;
+  for (const p of sectionParagraphs) {
+    // If Mr Opus dropped this paragraph, it's fine.
+    if (!reviewedContent.includes(p.fullMarkup)) continue;
+    // Paragraph kept in reviewed — only OK if it has no shop links (i.e. it
+    // wasn't a promo paragraph in the first place, just happened to sit here).
+    if (shopUrlRe.test(p.innerContent)) return false;
+  }
+  return true;
+}
+
+function extractLabelTextFromBlock(block: string): string | null {
+  const heading = block.match(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i);
+  if (heading) return heading[1]!.replace(/<[^>]+>/g, '').trim();
+  const bold = block.match(/<(strong|b|em)>([\s\S]*?)<\/\1>/i);
+  if (bold) return bold[2]!.replace(/<[^>]+>/g, '').trim();
+  return null;
+}
+
+/**
+ * Flag any non-paragraph block in the reviewed output whose exact markup did
+ * NOT appear in the original. Paragraph splits/merges are unrestricted, but
+ * every non-paragraph block (list, list-item, heading, quote, image, etc.)
+ * must have existed byte-identically in the original content.
+ *
+ * Count-based comparisons miss the failure mode where Mr Opus deletes an
+ * old list block (correctly, via the COLLAPSE RULE) and invents a fresh
+ * list block to dress up an inserted link — net count unchanged but the
+ * new list never existed. Identity-based matching catches it.
+ */
+export function validateNoNewBlockTypes(
+  originalContent: string,
+  reviewedContent: string,
+): LockFailure[] {
+  const failures: LockFailure[] = [];
+  const seen = new Set<string>();
+
+  for (const block of parseBlocks(reviewedContent)) {
+    if (block.isAcf) continue;
+    if (block.type === 'paragraph' || block.type === 'core/paragraph') continue;
+    if (seen.has(block.fullMarkup)) continue;
+    seen.add(block.fullMarkup);
+    if (originalContent.includes(block.fullMarkup)) continue;
+
+    const preview = block.label.length > 60
+      ? block.label.substring(0, 60) + '…'
+      : block.label;
+    failures.push({
+      type: 'new-block',
+      value: `${block.type}: "${preview}"`,
+    });
+  }
   return failures;
 }
 

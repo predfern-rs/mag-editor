@@ -72,7 +72,13 @@ function applyRemoveRecommendation(rec: LinkRecommendation, content: string, kee
 
   for (const tryUrl of urls) {
     const escapedUrl = tryUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const linkRegex = new RegExp(`<a\\s[^>]*href="${escapedUrl}"[^>]*>([\\s\\S]*?)</a>`, 'gi');
+    // Tempered greedy token for anchor body: matches any char that isn't the
+    // start of "</a>". Prevents the non-greedy regex from extending across
+    // block boundaries when the nearest </a> isn't followed by the expected
+    // suffix. Without this guard, a REMOVE can silently delete paragraphs
+    // or sections between the target anchor and the next matching </a>.
+    const anchorBody = `((?:(?!</a>)[\\s\\S])*?)`;
+    const linkRegex = new RegExp(`<a\\s[^>]*href="${escapedUrl}"[^>]*>${anchorBody}</a>`, 'gi');
 
     if (linkRegex.test(newContent)) {
       found = true;
@@ -92,14 +98,14 @@ function applyRemoveRecommendation(rec: LinkRecommendation, content: string, kee
         const sep = `(?:\\s|&nbsp;)*[/|](?:\\s|&nbsp;)*`;
 
         // Pattern 1: separator BEFORE the link: " / <a>text</a>"
-        const beforeSepRegex = new RegExp(`${sep}<a\\s[^>]*href="${escapedUrl}"[^>]*>[\\s\\S]*?</a>`, 'gi');
+        const beforeSepRegex = new RegExp(`${sep}<a\\s[^>]*href="${escapedUrl}"[^>]*>${anchorBody}</a>`, 'gi');
         if (beforeSepRegex.test(newContent)) {
           beforeSepRegex.lastIndex = 0;
           newContent = newContent.replace(beforeSepRegex, '');
         }
         // Pattern 2: separator AFTER the link: "<a>text</a> / "
         else {
-          const afterSepRegex = new RegExp(`<a\\s[^>]*href="${escapedUrl}"[^>]*>[\\s\\S]*?</a>${sep}`, 'gi');
+          const afterSepRegex = new RegExp(`<a\\s[^>]*href="${escapedUrl}"[^>]*>${anchorBody}</a>${sep}`, 'gi');
           if (afterSepRegex.test(newContent)) {
             afterSepRegex.lastIndex = 0;
             newContent = newContent.replace(afterSepRegex, '');

@@ -68,8 +68,70 @@ describe('validateLocks', () => {
     const original = `<!-- wp:heading -->\n<h2 class="wp-block-heading">Related Articles</h2>\n<!-- /wp:heading -->`;
     const reviewed = `<!-- wp:heading -->\n<h2 class="wp-block-heading">Related</h2>\n<!-- /wp:heading -->`;
     const failures = validateLocks(original, reviewed, []);
-    expect(failures).toHaveLength(1);
-    expect(failures[0]!.type).toBe('heading');
+    // Reported twice on purpose: the old heading is missing (heading drop)
+    // AND the edited heading is a block that didn't exist in the original
+    // (new-block). Both signals are accurate and the UI treats them the same.
+    expect(failures.map((f) => f.type).sort()).toEqual(['heading', 'new-block']);
+  });
+
+  it('allows dropping a Related Reading heading when its collapsed list is also dropped', () => {
+    const original = `
+<!-- wp:heading {"level":3} -->
+<h3 class="wp-block-heading">Related Reading</h3>
+<!-- /wp:heading -->
+
+<!-- wp:list -->
+<ul><!-- wp:list-item --><li><a href="/x">Only one item left</a></li><!-- /wp:list-item --></ul>
+<!-- /wp:list -->
+`.trim();
+
+    const reviewed = `<!-- wp:paragraph --><p>Some body copy above the old section.</p><!-- /wp:paragraph -->`;
+
+    const failures = validateLocks(original, reviewed, []);
+    // heading + list both dropped together → no heading failure. The remaining
+    // anchor/href failures come from the locked link (if any) — we passed [],
+    // so failures should be empty.
+    expect(failures).toEqual([]);
+  });
+
+  it('still fails when a Related Reading heading is dropped but its list stays', () => {
+    const original = `
+<!-- wp:heading {"level":3} -->
+<h3 class="wp-block-heading">Related Reading</h3>
+<!-- /wp:heading -->
+
+<!-- wp:list -->
+<ul><!-- wp:list-item --><li><a href="/x">Still here</a></li><!-- /wp:list-item --></ul>
+<!-- /wp:list -->
+`.trim();
+
+    const reviewed = `
+<!-- wp:list -->
+<ul><!-- wp:list-item --><li><a href="/x">Still here</a></li><!-- /wp:list-item --></ul>
+<!-- /wp:list -->
+`.trim();
+
+    const failures = validateLocks(original, reviewed, []);
+    const headingFailures = failures.filter((f) => f.type === 'heading');
+    expect(headingFailures).toHaveLength(1);
+    expect(headingFailures[0]!.value).toBe('Related Reading');
+  });
+
+  it('allows dropping a bold-label Related Reading paragraph with its collapsed list', () => {
+    const original = `
+<!-- wp:paragraph -->
+<p><strong>Related Reading:</strong></p>
+<!-- /wp:paragraph -->
+
+<!-- wp:list -->
+<ul><!-- wp:list-item --><li><a href="/x">Last one</a></li><!-- /wp:list-item --></ul>
+<!-- /wp:list -->
+`.trim();
+
+    const reviewed = `<!-- wp:paragraph --><p>Normal body copy.</p><!-- /wp:paragraph -->`;
+
+    const failures = validateLocks(original, reviewed, []);
+    expect(failures).toEqual([]);
   });
 });
 

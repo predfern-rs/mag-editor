@@ -126,24 +126,11 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
   const originalContent = contentData?.content.raw ?? '';
   const postTitle = contentData?.title.raw ?? selectedArticle?.title ?? '';
 
-  // Rebuild content by re-applying all applied recommendations from the original
-  const currentContent = useMemo(() => {
-    if (editedContent !== null) return editedContent;
-    if (appliedIndices.size === 0 || !selectedArticle) return originalContent;
-
-    let content = originalContent;
-    const sorted = [...appliedIndices.entries()].sort((a, b) => a[0] - b[0]);
-    for (const [idx, keepText] of sorted) {
-      const rec = selectedArticle.recommendations[idx];
-      if (!rec) continue;
-      const result = applyRecommendation(rec, content, keepText);
-      if (result.success) {
-        content = result.modifiedContent;
-      }
-    }
-    return content;
-  }, [originalContent, appliedIndices, selectedArticle, editedContent]);
-
+  // currentContent is the live working copy. Every action (single Apply,
+  // PlacementPicker, Apply-all, AI chat, Mr Opus review) sets editedContent
+  // directly, so nothing ever gets clobbered by a replay. When editedContent
+  // is null we're pristine and currentContent falls back to originalContent.
+  const currentContent = editedContent ?? originalContent;
   const hasChanges = currentContent !== originalContent;
 
   // Reset editor state when article changes
@@ -157,21 +144,22 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
     setOpusModalOpen(false);
   }, [selectedArticleId]);
 
-  // Lock list for Mr Opus: all applied ADD anchors (+ hrefs) and KEEP links.
-  // REMOVE recs don't add locks (the whole point of that rec is the link leaves).
+  // Lock list for Mr Opus: any ADD/KEEP rec whose anchor + href are BOTH
+  // present in the current content. Derived from content (not appliedIndices)
+  // so manual PlacementPicker insertions and AI-chat edits are reviewed the
+  // same way as Apply-all output. REMOVE recs don't add locks.
   const opusLockedLinks = useMemo(() => {
     if (!selectedArticle) return [];
     const locks: Array<{ anchor: string; href: string }> = [];
-    selectedArticle.recommendations.forEach((rec, i) => {
-      if (rec.action === 'add' && appliedIndices.has(i) && rec.anchor && rec.targetUrl) {
-        locks.push({ anchor: rec.anchor, href: rec.targetUrl });
-      }
-      if (rec.action === 'keep' && rec.anchor && rec.targetUrl) {
+    selectedArticle.recommendations.forEach((rec) => {
+      if (rec.action !== 'add' && rec.action !== 'keep') return;
+      if (!rec.anchor || !rec.targetUrl) return;
+      if (currentContent.includes(rec.anchor) && currentContent.includes(rec.targetUrl)) {
         locks.push({ anchor: rec.anchor, href: rec.targetUrl });
       }
     });
     return locks;
-  }, [selectedArticle, appliedIndices]);
+  }, [selectedArticle, currentContent]);
 
   const opusBrand: Brand = useMemo(() => {
     if (selectedArticle) {
@@ -188,7 +176,11 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
     return 'ridestore';
   }, [selectedArticle]);
 
-  const opusReviewEnabled = appliedIndices.size > 0 && !!selectedArticle;
+  // Enable Mr Opus whenever the article has been modified. The review does
+  // two jobs: protect locked links (anchor+href) AND clean up truncation
+  // artefacts from removes (e.g. "Look out for rides at" left dangling).
+  // Gating on locks alone hides the button exactly when cleanup is needed.
+  const opusReviewEnabled = hasChanges && !!selectedArticle;
 
   // ── Handlers ───────────────────────────────────────────────────────
   function handleSelectArticle(id: string) {
@@ -234,8 +226,7 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
       const result = applyRecommendation(rec, currentContent, keepText);
 
       if (result.success) {
-        // Add to applied set — content will be rebuilt automatically via useMemo
-        setEditedContent(null); // clear any manual edits so useMemo rebuilds
+        setEditedContent(result.modifiedContent);
         setAppliedIndices((prev) => new Map(prev).set(recIndex, keepText ?? false));
         setLastAppliedRec(rec);
 
@@ -299,7 +290,7 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
       if (s === 'skipped') skipped += 1;
     });
 
-    setEditedContent(null); // let useMemo rebuild from appliedIndices
+    setEditedContent(runningContent);
     setAppliedIndices(newAppliedIndices);
     setRecStatuses((prev) => ({ ...prev, [selectedArticleId]: articleStatuses }));
 
@@ -311,17 +302,18 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
     setApplyAllSummary(parts.join(' '));
   }, [selectedArticle, selectedArticleId, currentContent, appliedIndices, recStatuses]);
 
-  // Undo a single recommendation
+  // Mark a recommendation as pending again so Apply-all will re-process it.
+  // Does NOT revert the text change — use the Revert button for a full rollback.
+  // Intentional: trying to reverse a single rec would often collide with
+  // manual placements or Mr Opus edits layered on top.
   const handleUndoRecommendation = useCallback(
     (recIndex: number) => {
-      setEditedContent(null); // clear manual edits so useMemo rebuilds
       setAppliedIndices((prev) => {
         const next = new Map(prev);
         next.delete(recIndex);
         return next;
       });
       if (selectedArticleId) {
-        // Reset status back to pending
         setRecStatuses((prev) => {
           const articleRecs = { ...(prev[selectedArticleId] ?? {}) };
           delete articleRecs[recIndex];

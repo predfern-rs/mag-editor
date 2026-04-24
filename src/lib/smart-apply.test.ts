@@ -28,6 +28,33 @@ describe('applyRemoveRecommendation', () => {
     expect(result.modifiedContent).toBe('<p>Check our  here.</p>');
   });
 
+  it('does not consume content across block boundaries when looking for a trailing separator', () => {
+    // Regression: the REMOVE regex used [\s\S]*? inside <a>…</a>, which
+    // extended across sections to find the NEXT </a> followed by " / ".
+    // That silently deleted Look sections, FAQs, Wrapping up, and half of
+    // Related Reading from a real test on post 1201. Tempered greedy token
+    // now caps the anchor body at its immediate </a>.
+    const content = [
+      '<!-- wp:heading --><h2>Get inspiration</h2><!-- /wp:heading -->',
+      '<!-- wp:paragraph --><p>Check <a href="https://example.com/target">target</a> to keep you warm.</p><!-- /wp:paragraph -->',
+      '<!-- wp:heading --><h2>Middle section</h2><!-- /wp:heading -->',
+      '<!-- wp:paragraph --><p>Some long body copy that must survive removes.</p><!-- /wp:paragraph -->',
+      '<!-- wp:list --><ul>',
+      '<!-- wp:list-item --><li><a href="https://example.com/other">Other link</a> / <a href="https://example.com/extra">Extra</a></li><!-- /wp:list-item -->',
+      '</ul><!-- /wp:list -->',
+    ].join('\n\n');
+
+    const result = applyRecommendation(removeRec('https://example.com/target'), content);
+    expect(result.success).toBe(true);
+    // Middle section and its paragraph MUST still be present. The old regex
+    // would have deleted them along with the target anchor.
+    expect(result.modifiedContent).toContain('Middle section');
+    expect(result.modifiedContent).toContain('Some long body copy');
+    expect(result.modifiedContent).toContain('Other link');
+    // Target link itself must be gone.
+    expect(result.modifiedContent).not.toContain('href="https://example.com/target"');
+  });
+
   it('removes link with &nbsp;/&nbsp; separator BEFORE (middle item)', () => {
     const content =
       '<li><a href="/first/">First</a>&nbsp;/&nbsp;<a href="/second/">Second</a>&nbsp;/&nbsp;<a href="/third/">Third</a></li>';

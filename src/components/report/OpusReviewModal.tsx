@@ -344,6 +344,7 @@ function ReviewingView(props: {
   const hasHeadingFailures = props.lockFailures.some(
     (f) => f.type === 'heading' || f.type === 'label',
   );
+  const hasNewBlockFailures = props.lockFailures.some((f) => f.type === 'new-block');
   const noop =
     props.result.segmentsReviewed === 0 ||
     props.result.changeSummary.toLowerCase().includes('no changes needed');
@@ -384,17 +385,25 @@ function ReviewingView(props: {
             ))}
           </ul>
           <p className="text-[11px] text-red-600 mt-2 leading-relaxed">
-            Accepting anyway will save content that drops{' '}
-            {[
-              droppedLinkFailures > 0 ? 'one or more links' : null,
-              hasAcfFailures ? 'one or more ACF blocks' : null,
-              hasHeadingFailures ? 'one or more section headings / labels' : null,
-            ]
-              .filter(Boolean)
-              .join(' and ')}
-            . {hasHeadingFailures
-              ? 'Heading or label drops are usually structural mistakes (e.g. a "Related Reading:" subheading deleted because the list shrank). Reject is almost always the right move.'
-              : 'Usually the right move is Reject, or use "Accept & re-flag dropped" to save the polish and retry the dropped links manually.'}
+            {hasNewBlockFailures ? (
+              <>
+                Mr Opus invented new non-paragraph blocks (headings, lists, quotes, etc.) instead of just polishing the paragraphs. This is almost always wrong on an internal-linking pass. Reject and re-run, or fix manually.
+              </>
+            ) : (
+              <>
+                Accepting anyway will save content that drops{' '}
+                {[
+                  droppedLinkFailures > 0 ? 'one or more links' : null,
+                  hasAcfFailures ? 'one or more ACF blocks' : null,
+                  hasHeadingFailures ? 'one or more section headings / labels' : null,
+                ]
+                  .filter(Boolean)
+                  .join(' and ')}
+                . {hasHeadingFailures
+                  ? 'Heading or label drops are usually structural mistakes (e.g. a "Related Reading:" subheading deleted because the list shrank). Reject is almost always the right move.'
+                  : 'Usually the right move is Reject, or use "Accept & re-flag dropped" to save the polish and retry the dropped links manually.'}
+              </>
+            )}
           </p>
           {!props.acknowledgeLockFailures && (
             <button
