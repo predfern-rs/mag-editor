@@ -1,4 +1,9 @@
 import { buildOpusReviewPrompt } from '../lib/opus-prompt';
+import {
+  extractReviewSegments,
+  stitchReviewedSegments,
+  type ReviewSegment,
+} from '../lib/opus-segments';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -27,11 +32,14 @@ export type LockFailure =
   | { type: 'acf'; value: string };
 
 export interface OpusReviewResponse {
+  /** Full article content with reviewed segments stitched back in. */
   reviewedContent: string;
   changeSummary: string;
   modelUsed: string;
   lockFailures: LockFailure[];
   usage: { input_tokens: number; output_tokens: number };
+  /** How many segments Mr Opus actually reviewed. Zero means nothing was in scope. */
+  segmentsReviewed: number;
 }
 
 function getApiKey(): string {
@@ -44,15 +52,29 @@ export async function runOpusReview(req: OpusReviewRequest): Promise<OpusReviewR
   const model: OpusModel = req.model ?? 'opus-4';
   const route = MODEL_ROUTES[model];
 
+  const segments = extractReviewSegments(req.content, req.lockedLinks);
+  if (segments.length === 0) {
+    // Nothing to review — locked links aren't in editable blocks, or there
+    // are no locks at all.  Return the article unchanged.
+    return {
+      reviewedContent: req.content,
+      changeSummary: 'No editable segments contain locked links — nothing to review.',
+      modelUsed: route,
+      lockFailures: [],
+      usage: { input_tokens: 0, output_tokens: 0 },
+      segmentsReviewed: 0,
+    };
+  }
+
   const { system, user } = buildOpusReviewPrompt({
     title: req.title,
     brand: req.brand,
-    content: req.content,
-    lockedLinks: req.lockedLinks,
+    segments,
   });
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 180_000);
+  const timeoutMs = model === 'opus-4' ? 420_000 : 180_000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   let raw: string;
   let usage = { input_tokens: 0, output_tokens: 0 };
@@ -99,16 +121,17 @@ export async function runOpusReview(req: OpusReviewRequest): Promise<OpusReviewR
     throw new Error('Mr Opus returned an empty response');
   }
 
-  const reviewedContent = extractTagged(raw, 'REVIEWED_CONTENT');
+  const reviewedById = extractReviewedSegments(raw);
   const changeSummary = extractTagged(raw, 'CHANGE_SUMMARY') ?? '';
 
-  if (!reviewedContent) {
+  if (Object.keys(reviewedById).length === 0) {
     throw new Error(
-      'Mr Opus did not return a <REVIEWED_CONTENT> block. Raw response (truncated): ' +
+      'Mr Opus did not return any <REVIEWED_SEGMENT> blocks. Raw response (truncated): ' +
         raw.substring(0, 400),
     );
   }
 
+  const reviewedContent = stitchReviewedSegments(req.content, segments, reviewedById);
   const lockFailures = validateLocks(req.content, reviewedContent, req.lockedLinks);
 
   return {
@@ -117,7 +140,22 @@ export async function runOpusReview(req: OpusReviewRequest): Promise<OpusReviewR
     modelUsed: route,
     lockFailures,
     usage,
+    segmentsReviewed: Object.keys(reviewedById).length,
   };
+}
+
+/**
+ * Extract all <REVIEWED_SEGMENT id="…">…</REVIEWED_SEGMENT> blocks from the
+ * raw model response, keyed by id.
+ */
+export function extractReviewedSegments(raw: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const re = /<REVIEWED_SEGMENT\s+id="([^"]+)"\s*>([\s\S]*?)<\/REVIEWED_SEGMENT>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw)) !== null) {
+    out[m[1]!] = m[2]!.trim();
+  }
+  return out;
 }
 
 /**
@@ -165,14 +203,12 @@ function extractTagged(raw: string, tag: string): string | null {
 export function extractAcfBlocks(content: string): string[] {
   const blocks: string[] = [];
 
-  // Self-closing ACF blocks.
   const selfClosing = /<!--\s*wp:acf\/[^\s]+[^>]*\/-->/g;
   let m: RegExpExecArray | null;
   while ((m = selfClosing.exec(content)) !== null) {
     blocks.push(m[0]);
   }
 
-  // Paired ACF blocks — capture the whole span including inner content.
   const paired = /<!--\s*wp:acf\/([\S]+?)\s[^>]*-->[\s\S]*?<!--\s*\/wp:acf\/\1\s*-->/g;
   while ((m = paired.exec(content)) !== null) {
     blocks.push(m[0]);
@@ -185,3 +221,5 @@ function firstLine(s: string): string {
   const idx = s.indexOf('\n');
   return idx >= 0 ? s.substring(0, idx) : s;
 }
+
+export type { ReviewSegment };

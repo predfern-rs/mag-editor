@@ -1,10 +1,10 @@
 import type { Brand } from '../api/opus-review';
+import type { ReviewSegment } from './opus-segments';
 
 export interface OpusPromptArgs {
   title: string;
   brand: Brand;
-  content: string;
-  lockedLinks: Array<{ anchor: string; href: string }>;
+  segments: ReviewSegment[];
 }
 
 const BRAND_VOICE: Record<Brand, string> = {
@@ -19,50 +19,61 @@ const BRAND_VOICE: Record<Brand, string> = {
 export function buildOpusReviewPrompt(args: OpusPromptArgs): { system: string; user: string } {
   const voice = BRAND_VOICE[args.brand];
 
-  const lockedList = args.lockedLinks.length === 0
-    ? '(no locked links)'
-    : args.lockedLinks
-        .map((l, i) => `${i + 1}. anchor: "${l.anchor}" → href: "${l.href}"`)
-        .join('\n');
+  const system = `You are an experienced magazine editor doing a minimal-change polish pass on short SEGMENTS of an article that has just had internal links inserted by an automated tool. The inserted sentences sometimes land as standalone paragraphs when they would read better merged into an adjacent paragraph, or land in a spot where a one-line rewrite of the surrounding prose smooths the flow. Your job is to make exactly those fixes and nothing more, segment by segment.
 
-  const system = `You are an experienced magazine editor doing a minimal-change polish pass on an article that has just had internal links inserted by an automated tool. The inserted sentences sometimes land as standalone paragraphs when they would read better merged into an adjacent paragraph, or land in a spot where a one-line rewrite of the surrounding prose smooths the flow. Your job is to make exactly those fixes and nothing more.
-
-Brand voice for this article:
+Brand voice:
 ${voice}
 
 Scope rules:
-- Only modify paragraphs that either contain a locked link or sit directly adjacent to one. Do not touch unrelated prose anywhere else in the article.
+- You only see SEGMENTS of the article, not the whole thing. The rest of the article stays untouched and you will never see it.
+- Within each segment, only modify paragraphs that either contain a locked link or sit directly adjacent to one.
 - Prefer merging a lone inserted sentence into the preceding paragraph when it reads more naturally that way.
-- When flow is off at a join, rewrite the join — one or two sentences — to fix it. Do not restructure the article.
-- If the article already reads well, return it unchanged.
-- Never add marketing hype, calls to action, or material not grounded in the existing text.
+- When flow is off at a join, rewrite the join — one or two sentences — to fix it. Do not restructure.
+- If a segment already reads well, return it byte-identical.
+- Do NOT add new headings, sections, or content that does not appear in the segment you were given.
+- Do NOT extend the article past where the segment ends. If the segment ends mid-thought, leave it mid-thought.
+- Never add marketing hype or calls to action.
 
 Hard rules (non-negotiable):
-1. Every locked anchor text from the list below MUST appear verbatim in your output, inside <a href="…">…</a> tags with the exact href listed. Do not rephrase anchors. Do not change hrefs.
-2. Every <!-- wp:acf/… -->, <!-- wp:acf/… /-->, and <!-- /wp:acf/… --> block (including all content between paired ACF delimiters) MUST appear byte-identical in your output. Do not modify, rewrite, reformat, or remove ACF blocks under any circumstances.
-3. Preserve every <!-- wp:… --> and <!-- /wp:… --> block delimiter for native blocks too (paragraph, heading, list, list-item, quote, image, etc.). Do not merge blocks across delimiters. Do not invent new block types.
-4. Return the FULL article content, not just changed paragraphs. Keep the same Gutenberg block format as the input. Do not wrap in markdown, JSON, or any other envelope.
-5. Preserve the article's voice and language. Do not switch from British to American spelling (or vice versa) if the article already has a consistent style.
+1. Every locked anchor text for a segment MUST appear verbatim in that segment's output, inside <a href="…">…</a> tags with the exact href. Do not rephrase anchors. Do not change hrefs.
+2. Preserve ALL typography exactly as given: curly quotes (' ' " "), straight quotes, em-dashes, en-dashes, ellipses, &nbsp;, every character as-is. Do NOT normalize "smart" quotes to straight quotes or vice versa.
+3. Preserve every <!-- wp:… --> and <!-- /wp:… --> block delimiter inside the segment. Do not merge blocks across delimiters. Do not invent new block types.
+4. If any <!-- wp:acf/… --> (or self-closing <!-- wp:acf/… /-->) appears inside a segment, it MUST appear byte-identical in your output for that segment.
+5. Return the FULL contents of each segment you edit (not just the changed paragraphs within it), so it can be swapped back into the article.
 
 Output format (strict):
-Return two XML-style blocks, in this exact order, nothing before or after:
+For every segment I send, return one <REVIEWED_SEGMENT id="…"> block, using the exact id I gave you. The order doesn't matter. After all reviewed segments, return a single <CHANGE_SUMMARY> block. Nothing else — no prose before, after, or between the tags.
 
-<REVIEWED_CONTENT>
-…the full reviewed article in Gutenberg block format…
-</REVIEWED_CONTENT>
+<REVIEWED_SEGMENT id="sN">
+…full edited segment markup in Gutenberg block format…
+</REVIEWED_SEGMENT>
 
 <CHANGE_SUMMARY>
-A short bullet list (1-5 items) of what you changed and why. If you changed nothing, write "No changes needed — article already flows well."
+A short bullet list (1-5 items) of what you changed and why, across all segments. If you changed nothing, write "No changes needed — article already flows well."
 </CHANGE_SUMMARY>`;
+
+  const segmentBlocks = args.segments
+    .map((seg) => {
+      const locks = seg.locks.length === 0
+        ? '(no locks for this segment)'
+        : seg.locks
+            .map((l, i) => `${i + 1}. anchor: "${l.anchor}" → href: "${l.href}"`)
+            .join('\n');
+      return `<SEGMENT id="${seg.id}">
+Locked links in this segment (must appear verbatim in your output):
+${locks}
+
+Markup:
+${seg.markup}
+</SEGMENT>`;
+    })
+    .join('\n\n');
 
   const user = `Article title: ${args.title}
 
-Locked links (these anchor texts and hrefs MUST appear verbatim in your output inside <a href="…">…</a> tags):
-${lockedList}
+Below are ${args.segments.length} segment(s) from this article. Edit each one independently. You do not need to coordinate across segments.
 
-Article content (Gutenberg block format):
-
-${args.content}`;
+${segmentBlocks}`;
 
   return { system, user };
 }

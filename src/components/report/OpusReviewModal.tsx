@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { LockFailure, OpusModel, OpusReviewResponse, Brand } from '../../api/opus-review';
 import { runOpusReview } from '../../api/opus-review';
 import { DiffPreview } from '../editor/DiffPreview';
+import { ReviewPreview } from '../editor/ReviewPreview';
 
 type ModalStatus = 'idle' | 'running' | 'reviewing' | 'error';
 
@@ -44,6 +45,7 @@ export function OpusReviewModal({
   const [error, setError] = useState<string | null>(null);
   const [acknowledgeLockFailures, setAcknowledgeLockFailures] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
 
   if (!isOpen) return null;
 
@@ -68,6 +70,7 @@ export function OpusReviewModal({
     setError(null);
     setAcknowledgeLockFailures(false);
     setShowDiff(false);
+    setShowPreview(false);
     onClose();
   }
 
@@ -99,6 +102,7 @@ export function OpusReviewModal({
     setStatus('idle');
     setResult(null);
     setShowDiff(false);
+    setShowPreview(false);
   }
 
   return (
@@ -150,6 +154,7 @@ export function OpusReviewModal({
                 acknowledgeLockFailures={acknowledgeLockFailures}
                 onAcknowledgeLockFailures={() => setAcknowledgeLockFailures(true)}
                 onViewDiff={() => setShowDiff(true)}
+                onViewPreview={() => setShowPreview(true)}
                 onAccept={handleAccept}
                 onReject={handleReject}
               />
@@ -159,16 +164,27 @@ export function OpusReviewModal({
       </div>
 
       {result && (
-        <DiffPreview
-          isOpen={showDiff}
-          onClose={() => setShowDiff(false)}
-          oldContent={content}
-          newContent={result.reviewedContent}
-          onConfirm={() => {
-            setShowDiff(false);
-            handleAccept();
-          }}
-        />
+        <>
+          <DiffPreview
+            isOpen={showDiff}
+            onClose={() => setShowDiff(false)}
+            oldContent={content}
+            newContent={result.reviewedContent}
+            onConfirm={() => {
+              setShowDiff(false);
+              handleAccept();
+            }}
+          />
+          <ReviewPreview
+            isOpen={showPreview}
+            onClose={() => setShowPreview(false)}
+            newContent={result.reviewedContent}
+            onConfirm={() => {
+              setShowPreview(false);
+              handleAccept();
+            }}
+          />
+        </>
       )}
     </>
   );
@@ -226,12 +242,25 @@ function IdleView(props: {
 }
 
 function RunningView({ model }: { model: OpusModel }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const modelLabel = model === 'opus-4' ? 'Claude Opus 4.6' : 'Claude Sonnet 4.5';
+  const expected = model === 'opus-4' ? '60\u2013300 seconds' : '15\u201390 seconds';
+  const timeoutSeconds = model === 'opus-4' ? 420 : 180;
+
   return (
     <div className="flex flex-col items-center py-8 text-center gap-3">
       <div className="w-10 h-10 rounded-full border-2 border-purple-200 border-t-purple-600 animate-spin" />
       <p className="text-sm font-medium text-gray-700">Mr Opus is reading…</p>
       <p className="text-xs text-gray-400">
-        Using {model === 'opus-4' ? 'Claude Opus 4.6' : 'Claude Sonnet 4.5'} via OpenRouter. Usually 15–60 seconds.
+        Using {modelLabel} via OpenRouter. Typical: {expected}.
+      </p>
+      <p className="text-[11px] text-gray-400 font-mono">
+        {elapsed}s elapsed · times out at {timeoutSeconds}s
       </p>
     </div>
   );
@@ -268,16 +297,20 @@ function ReviewingView(props: {
   acknowledgeLockFailures: boolean;
   onAcknowledgeLockFailures: () => void;
   onViewDiff: () => void;
+  onViewPreview: () => void;
   onAccept: () => void;
   onReject: () => void;
 }) {
   const hasFailures = props.lockFailures.length > 0;
   const canAccept = !hasFailures || props.acknowledgeLockFailures;
+  const noop =
+    props.result.segmentsReviewed === 0 ||
+    props.result.changeSummary.toLowerCase().includes('no changes needed');
 
   return (
     <div className="space-y-4">
-      <div className="rounded-md bg-green-50 border border-green-200 p-3">
-        <div className="text-[11px] font-semibold text-green-700 uppercase tracking-wide mb-1">
+      <div className={`rounded-md border p-3 ${noop ? 'bg-gray-50 border-gray-200' : 'bg-green-50 border-green-200'}`}>
+        <div className={`text-[11px] font-semibold uppercase tracking-wide mb-1 ${noop ? 'text-gray-500' : 'text-green-700'}`}>
           Mr Opus says
         </div>
         <p className="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed">
@@ -285,8 +318,12 @@ function ReviewingView(props: {
         </p>
       </div>
 
-      <div className="flex items-center gap-3 text-[11px] text-gray-500">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
         <span>Model: <span className="font-mono">{props.result.modelUsed}</span></span>
+        <span>·</span>
+        <span>
+          Segments reviewed: <span className="font-semibold text-gray-700">{props.result.segmentsReviewed}</span>
+        </span>
         <span>·</span>
         <span>
           Tokens: {props.result.usage.input_tokens} in / {props.result.usage.output_tokens} out
@@ -320,13 +357,23 @@ function ReviewingView(props: {
         </div>
       )}
 
-      <div className="flex justify-between items-center">
-        <button
-          onClick={props.onViewDiff}
-          className="px-3 py-2 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100"
-        >
-          View diff
-        </button>
+      <div className="flex justify-between items-center flex-wrap gap-2">
+        <div className="flex gap-2">
+          <button
+            onClick={props.onViewPreview}
+            className="px-3 py-2 text-xs font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md hover:bg-indigo-100"
+            title="See the reviewed article rendered"
+          >
+            👁️ Preview
+          </button>
+          <button
+            onClick={props.onViewDiff}
+            className="px-3 py-2 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100"
+            title="See raw HTML diff"
+          >
+            Diff
+          </button>
+        </div>
         <div className="flex gap-2">
           <button
             onClick={props.onReject}
