@@ -1,0 +1,60 @@
+name: Deploy to Cloudflare Pages
+
+# Backup deploy path that's independent of the Cloudflare Pages → GitHub
+# auto-deploy webhook (which has a habit of silently breaking after token
+# rotations). Triggers on every push to main and can also be run manually
+# from the Actions tab via workflow_dispatch.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # Cancel any in-flight deploy when a new commit lands. Last commit wins.
+  group: deploy-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        env:
+          # Vite inlines these into the client bundle at build time. Same
+          # values that Cloudflare Pages was using; mirror them in this
+          # repo's GitHub Secrets (Settings → Secrets and variables → Actions).
+          VITE_OPENROUTER_API_KEY: ${{ secrets.VITE_OPENROUTER_API_KEY }}
+          VITE_WP_URL: ${{ secrets.VITE_WP_URL }}
+          VITE_WP_USERNAME: ${{ secrets.VITE_WP_USERNAME }}
+          VITE_WP_APP_PASSWORD: ${{ secrets.VITE_WP_APP_PASSWORD }}
+          VITE_WP_RIDESTORE_URL: ${{ secrets.VITE_WP_RIDESTORE_URL }}
+          VITE_WP_RIDESTORE_USERNAME: ${{ secrets.VITE_WP_RIDESTORE_USERNAME }}
+          VITE_WP_RIDESTORE_APP_PASSWORD: ${{ secrets.VITE_WP_RIDESTORE_APP_PASSWORD }}
+          VITE_WP_DOPE_URL: ${{ secrets.VITE_WP_DOPE_URL }}
+          VITE_WP_DOPE_USERNAME: ${{ secrets.VITE_WP_DOPE_USERNAME }}
+          VITE_WP_DOPE_APP_PASSWORD: ${{ secrets.VITE_WP_DOPE_APP_PASSWORD }}
+          VITE_WP_MONTEC_URL: ${{ secrets.VITE_WP_MONTEC_URL }}
+          VITE_WP_MONTEC_USERNAME: ${{ secrets.VITE_WP_MONTEC_USERNAME }}
+          VITE_WP_MONTEC_APP_PASSWORD: ${{ secrets.VITE_WP_MONTEC_APP_PASSWORD }}
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=mag-editor --branch=main
