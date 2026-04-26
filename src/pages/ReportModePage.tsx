@@ -14,6 +14,13 @@ import { listPosts } from '../api/posts';
 import { getPostContent, revertToLastRevision } from '../api/content';
 import { applyRecommendation, findPlacementOptions, applyAtPlacement } from '../lib/smart-apply';
 import type { PlacementOption } from '../lib/smart-apply';
+import {
+  parseLocationHint,
+  findSectionByHint,
+  isLinkInSection,
+  findPlacementOptionsInSection,
+  applyLinkRelocation,
+} from '../lib/relocate';
 import { OpusReviewModal } from '../components/report/OpusReviewModal';
 import { detectSiteFromWpUrl } from '../lib/url-mapping';
 import { getActiveSite } from '../config';
@@ -350,6 +357,55 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
     [currentContent, selectedArticleId, handleUpdateRecStatus],
   );
 
+  // ── KEEP relocation ─────────────────────────────────────────────────
+  // For a KEEP rec with a "should live in X section" hint, surface a
+  // relocation option when the link currently sits in a different section.
+  // Returns null when no hint is present, no target section could be found,
+  // or the link is already where the hint says it should be.
+  const getRelocationTarget = useCallback(
+    (rec: LinkRecommendation): string | null => {
+      if (rec.action !== 'keep') return null;
+      if (!rec.anchor || !rec.targetUrl) return null;
+      const hint = parseLocationHint(rec.reason);
+      if (!hint) return null;
+      const section = findSectionByHint(currentContent, hint);
+      if (!section) return null;
+      if (isLinkInSection(currentContent, rec.anchor, rec.targetUrl, section.startIndex, section.endIndex)) {
+        return null;
+      }
+      return section.headingTitle || hint;
+    },
+    [currentContent],
+  );
+
+  const handleFindRelocatePlacements = useCallback(
+    (rec: LinkRecommendation): PlacementOption[] => {
+      const hint = parseLocationHint(rec.reason);
+      if (!hint) return [];
+      const section = findSectionByHint(currentContent, hint);
+      if (!section) return [];
+      return findPlacementOptionsInSection(currentContent, section);
+    },
+    [currentContent],
+  );
+
+  const handleRelocateAtPlacement = useCallback(
+    (rec: LinkRecommendation, recIndex: number, option: PlacementOption, anchorOverride?: string) => {
+      if (!rec.targetUrl) return;
+      const anchorText = (anchorOverride ?? rec.anchor ?? '').trim();
+      if (!anchorText) return;
+      const result = applyLinkRelocation(currentContent, anchorText, rec.targetUrl, option.insertAt);
+      if (result.success) {
+        setEditedContent(result.modifiedContent);
+        setLastAppliedRec(rec);
+        if (selectedArticleId) {
+          handleUpdateRecStatus(selectedArticleId, recIndex, 'applied');
+        }
+      }
+    },
+    [currentContent, selectedArticleId, handleUpdateRecStatus],
+  );
+
   function handleUpdateRecStatus(articleId: string, index: number, status: 'applied' | 'skipped') {
     setRecStatuses((prev) => ({
       ...prev,
@@ -502,6 +558,9 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
                       onTellMeWhere={handleTellMeWhere}
                       onFindPlacements={handleFindPlacements}
                       onApplyAtPlacement={handleApplyAtPlacement}
+                      getRelocationTarget={getRelocationTarget}
+                      onFindRelocatePlacements={handleFindRelocatePlacements}
+                      onRelocateAtPlacement={handleRelocateAtPlacement}
                       onSendInstruction={setAiInstruction}
                       recommendationStatuses={recStatuses[selectedArticle.id] ?? {}}
                       onUpdateRecStatus={(index, status) =>

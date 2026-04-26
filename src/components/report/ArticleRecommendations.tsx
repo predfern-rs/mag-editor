@@ -19,6 +19,10 @@ interface ArticleRecommendationsProps {
   onTellMeWhere?: (rec: LinkRecommendation) => void;
   onFindPlacements?: (rec: LinkRecommendation) => PlacementOption[];
   onApplyAtPlacement?: (rec: LinkRecommendation, index: number, option: PlacementOption) => void;
+  /** For each KEEP rec, returns the target section name when a relocation is suggested. */
+  getRelocationTarget?: (rec: LinkRecommendation, index: number) => string | null;
+  onFindRelocatePlacements?: (rec: LinkRecommendation) => PlacementOption[];
+  onRelocateAtPlacement?: (rec: LinkRecommendation, index: number, option: PlacementOption, anchorOverride?: string) => void;
   onSendInstruction?: (instruction: string) => void;
   recommendationStatuses: Record<number, RecStatus>;
   onUpdateRecStatus: (index: number, status: 'applied' | 'skipped') => void;
@@ -69,6 +73,9 @@ export function ArticleRecommendations({
   onTellMeWhere,
   onFindPlacements,
   onApplyAtPlacement,
+  getRelocationTarget,
+  onFindRelocatePlacements,
+  onRelocateAtPlacement,
   onSendInstruction,
   recommendationStatuses,
   onUpdateRecStatus,
@@ -238,6 +245,9 @@ export function ArticleRecommendations({
                   onFindPlacements={onFindPlacements ? () => onFindPlacements(rec) : undefined}
                   onApplyAtPlacement={onApplyAtPlacement ? (opt) => onApplyAtPlacement(rec, originalIndex, opt) : undefined}
                   onUpdateStatus={(s) => onUpdateRecStatus(originalIndex, s)}
+                  relocationTarget={getRelocationTarget ? getRelocationTarget(rec, originalIndex) : null}
+                  onFindRelocatePlacements={onFindRelocatePlacements ? () => onFindRelocatePlacements(rec) : undefined}
+                  onRelocateAtPlacement={onRelocateAtPlacement ? (opt, anchorOverride) => onRelocateAtPlacement(rec, originalIndex, opt, anchorOverride) : undefined}
                 />
               ))}
             </div>

@@ -16,6 +16,13 @@ interface RecommendationCardProps {
   onFindPlacements?: () => PlacementOption[];
   onApplyAtPlacement?: (option: PlacementOption) => void;
   onUpdateStatus: (status: 'applied' | 'skipped') => void;
+  /**
+   * KEEP recs only: the hinted section this link should live in, when the
+   * link is not currently there. Rendering the relocate UI depends on this.
+   */
+  relocationTarget?: string | null;
+  onFindRelocatePlacements?: () => PlacementOption[];
+  onRelocateAtPlacement?: (option: PlacementOption, anchorOverride?: string) => void;
 }
 
 const ACTION_STYLES: Record<string, { border: string; borderApplied: string; badge: string; badgeText: string }> = {
@@ -50,6 +57,9 @@ export function RecommendationCard({
   onFindPlacements,
   onApplyAtPlacement,
   onUpdateStatus,
+  relocationTarget,
+  onFindRelocatePlacements,
+  onRelocateAtPlacement,
 }: RecommendationCardProps) {
   const style = ACTION_STYLES[rec.action] ?? ACTION_STYLES.keep;
 
@@ -200,6 +210,17 @@ export function RecommendationCard({
           onUpdateStatus={onUpdateStatus}
         />
       )}
+
+      {/* KEEP-only: relocate action when the audit hint says this link
+          should sit in a different section than where it currently lives. */}
+      {rec.action === 'keep' && relocationTarget && onFindRelocatePlacements && onRelocateAtPlacement && (
+        <RelocateActions
+          targetSection={relocationTarget}
+          defaultAnchor={rec.anchor}
+          onFindPlacements={onFindRelocatePlacements}
+          onRelocateAtPlacement={onRelocateAtPlacement}
+        />
+      )}
     </div>
   );
 }
@@ -283,6 +304,95 @@ function RemoveOrApplyActions({
           }}
           onCancel={() => setPlacements(null)}
         />
+      )}
+    </div>
+  );
+}
+
+/** KEEP-only action row: badge + editable anchor + "Show placements" for link relocation. */
+function RelocateActions({
+  targetSection,
+  defaultAnchor,
+  onFindPlacements,
+  onRelocateAtPlacement,
+}: {
+  targetSection: string;
+  defaultAnchor: string;
+  onFindPlacements: () => PlacementOption[];
+  onRelocateAtPlacement: (option: PlacementOption, anchorOverride?: string) => void;
+}) {
+  const [placements, setPlacements] = useState<PlacementOption[] | null>(null);
+  const [editedAnchor, setEditedAnchor] = useState(defaultAnchor);
+
+  const handleShowPlaces = () => {
+    const options = onFindPlacements();
+    setPlacements(options);
+  };
+
+  const effectiveAnchor = editedAnchor.trim() || defaultAnchor;
+
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 border border-indigo-200 px-2 py-1 text-[11px] font-medium text-indigo-700">
+          📍 Suggested move to "{targetSection}"
+        </span>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <label className="text-[11px] font-medium text-gray-500 whitespace-nowrap">
+          Anchor text:
+        </label>
+        <input
+          type="text"
+          value={editedAnchor}
+          onChange={(e) => setEditedAnchor(e.target.value)}
+          className="flex-1 min-w-0 px-2 py-1 text-xs text-gray-800 border border-gray-300 rounded-md focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200"
+          placeholder={defaultAnchor}
+        />
+        {editedAnchor !== defaultAnchor && (
+          <button
+            onClick={() => setEditedAnchor(defaultAnchor)}
+            className="text-[11px] text-gray-400 hover:text-gray-600"
+            title="Restore original anchor text"
+          >
+            reset
+          </button>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <button
+          onClick={handleShowPlaces}
+          disabled={effectiveAnchor.length === 0}
+          className="px-3 py-1.5 text-xs font-medium text-indigo-600 bg-white border border-indigo-300 rounded-md hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          Show placements
+        </button>
+      </div>
+
+      {placements !== null && (
+        placements.length === 0 ? (
+          <div className="text-xs text-gray-500 italic">
+            No placement options found in "{targetSection}" — the section may
+            be empty or the heading couldn't be matched.
+            <button
+              onClick={() => setPlacements(null)}
+              className="ml-2 text-indigo-600 hover:underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        ) : (
+          <PlacementPicker
+            options={placements}
+            onSelect={(opt) => {
+              onRelocateAtPlacement(opt, effectiveAnchor);
+              setPlacements(null);
+            }}
+            onCancel={() => setPlacements(null)}
+          />
+        )
       )}
     </div>
   );
