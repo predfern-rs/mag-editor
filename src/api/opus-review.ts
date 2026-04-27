@@ -177,7 +177,16 @@ export function validateLocks(
 
   for (const link of lockedLinks) {
     if (link.anchor && !reviewedContent.includes(link.anchor)) {
-      failures.push({ type: 'anchor', value: link.anchor });
+      // EXCEPTION: when the locked link's href already lives inside a Related
+      // Reading-style list (bullet under a "Related Reading"/"More from us"
+      // heading or bold-only label paragraph), the bullet's editorial wording
+      // is the canonical anchor text. Mr Opus must leave it alone, so the
+      // locked anchor string won't appear verbatim — and that's fine.
+      if (link.href && isHrefInRelatedReadingList(reviewedContent, link.href)) {
+        // skip anchor check for this link
+      } else {
+        failures.push({ type: 'anchor', value: link.anchor });
+      }
     }
     if (link.href && !reviewedContent.includes(link.href)) {
       failures.push({ type: 'href', value: link.href });
@@ -313,6 +322,36 @@ function isAllowedShopCalloutDrop(
     if (shopUrlRe.test(p.innerContent)) return false;
   }
   return true;
+}
+
+/**
+ * True when `href` appears inside a list-item that sits within a list block
+ * directly preceded by a Related Reading-style heading or bold-label
+ * paragraph. Used to exempt these bullets from the locked-anchor verbatim
+ * check: the bullet's existing wording is the editorial choice and Mr Opus
+ * is told to leave it alone.
+ */
+export function isHrefInRelatedReadingList(content: string, href: string): boolean {
+  if (!href) return false;
+  const blocks = parseBlocks(content);
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i]!;
+    if (b.type !== 'list') continue;
+    if (!b.innerContent.includes(href)) continue;
+
+    // Walk backwards past whitespace-only / acf blocks to find the marker.
+    let markerLabel: string | null = null;
+    for (let j = i - 1; j >= 0; j--) {
+      const prev = blocks[j]!;
+      if (prev.isAcf) continue;
+      const label = extractLabelTextFromBlock(prev.fullMarkup);
+      if (label) { markerLabel = label; break; }
+      // Any other non-empty block kills the association.
+      break;
+    }
+    if (markerLabel && isRelatedReadingLabelText(markerLabel)) return true;
+  }
+  return false;
 }
 
 function extractLabelTextFromBlock(block: string): string | null {

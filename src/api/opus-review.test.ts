@@ -187,4 +187,38 @@ describe('validateLocks — bold-label paragraphs', () => {
     expect(failures[0]!.type).toBe('label');
     expect(failures[0]!.value).toBe('Related Reading:');
   });
+
+  it('skips locked-anchor verbatim check when href lives in a Related Reading list', () => {
+    const original = `
+<!-- wp:heading -->
+<h2 class="wp-block-heading">Related Reading</h2>
+<!-- /wp:heading -->
+
+<!-- wp:list -->
+<ul><!-- wp:list-item --><li><a href="https://www.ridestore.com/mag/night-skiing/">The ultimate guide to night skiing</a></li><!-- /wp:list-item --></ul>
+<!-- /wp:list -->
+`.trim();
+
+    const reviewed = original;
+
+    const failures = validateLocks(original, reviewed, [
+      { anchor: 'guide to night skiing', href: 'https://www.ridestore.com/mag/night-skiing/' },
+    ]);
+
+    expect(failures).toHaveLength(0);
+  });
+
+  it('still fails the anchor lock when href is NOT in a Related Reading list', () => {
+    const original = `
+<!-- wp:paragraph --><p>Some prose with a <a href="/x">cool link</a> inline.</p><!-- /wp:paragraph -->
+`.trim();
+
+    const reviewed = original;
+
+    const failures = validateLocks(original, reviewed, [
+      { anchor: 'different anchor', href: '/x' },
+    ]);
+
+    expect(failures.some((f) => f.type === 'anchor')).toBe(true);
+  });
 });
