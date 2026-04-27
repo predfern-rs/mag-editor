@@ -5,6 +5,7 @@ import {
   extractSignificantWords,
   extractSentenceHtml,
   findMatchingSentenceText,
+  removeAddedLinkInstance,
 } from './smart-apply';
 import type { LinkRecommendation } from './report-parser';
 
@@ -273,5 +274,43 @@ describe('applyRecommendation ADD', () => {
     expect(result.success).toBe(true);
     expect(result.modifiedContent).toContain('<a href="https://example.com/coworking/">coworking spaces for skiers</a>');
     expect(result.modifiedContent).toContain('work remotely from the mountains');
+  });
+});
+
+describe('removeAddedLinkInstance', () => {
+  it('removes the newly added link when there were none before', () => {
+    const before = '<p>Some prose without the link.</p>';
+    const current = '<p>Some prose with <a href="/x">a new link</a> in it.</p>';
+    const result = removeAddedLinkInstance(current, before, '/x');
+    expect(result).toBe('<p>Some prose with  in it.</p>');
+  });
+
+  it('preserves a pre-existing same-URL link and removes only the new one', () => {
+    const before = '<p>Old: <a href="/x">first</a> only.</p>';
+    const current = '<p>Old: <a href="/x">first</a> only.</p><p>New: <a href="/x">second</a>.</p>';
+    const result = removeAddedLinkInstance(current, before, '/x');
+    expect(result).toContain('<a href="/x">first</a>');
+    expect(result).not.toContain('<a href="/x">second</a>');
+  });
+
+  it('returns content unchanged when no new instance exists', () => {
+    const before = '<p>Already had <a href="/x">link</a>.</p>';
+    const current = before;
+    const result = removeAddedLinkInstance(current, before, '/x');
+    expect(result).toBe(current);
+  });
+
+  it('handles trailing-slash url variation', () => {
+    const before = '<p>No links yet.</p>';
+    const current = '<p>Now with <a href="/x/">link</a>.</p>';
+    const result = removeAddedLinkInstance(current, before, '/x');
+    expect(result).toBe('<p>Now with .</p>');
+  });
+
+  it('removes only the first new instance even if two were added', () => {
+    const before = '<p>None.</p>';
+    const current = '<p>None.</p><p><a href="/x">A</a> and <a href="/x">B</a>.</p>';
+    const result = removeAddedLinkInstance(current, before, '/x');
+    expect(result).toBe('<p>None.</p><p> and <a href="/x">B</a>.</p>');
   });
 });

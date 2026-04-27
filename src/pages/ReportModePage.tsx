@@ -12,7 +12,7 @@ import { ReviewPreview } from '../components/editor/ReviewPreview';
 import { useUpdatePostContent } from '../hooks/usePostContent';
 import { listPosts } from '../api/posts';
 import { getPostContent, revertToLastRevision } from '../api/content';
-import { applyRecommendation, findPlacementOptions, applyAtPlacement } from '../lib/smart-apply';
+import { applyRecommendation, findPlacementOptions, applyAtPlacement, removeAddedLinkInstance } from '../lib/smart-apply';
 import type { PlacementOption } from '../lib/smart-apply';
 import {
   parseLocationHint,
@@ -125,6 +125,10 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
   const [lastAppliedRec, setLastAppliedRec] = useState<LinkRecommendation | null>(null);
   // Track which recommendation indices have been applied + their keepText setting
   const [appliedIndices, setAppliedIndices] = useState<Map<number, boolean>>(new Map());
+  // Per-rec snapshots: content BEFORE applying this rec, plus content AFTER.
+  // Lets Undo properly remove the inserted link (snapshot restore when nothing
+  // has layered on top, or targeted <a> removal when it has).
+  const [applySnapshots, setApplySnapshots] = useState<Map<number, { before: string; after: string }>>(new Map());
   // Summary banner shown after "Apply all fixes" (e.g. "Applied 7 of 9. 2 need manual placement.")
   const [applyAllSummary, setApplyAllSummary] = useState<string | null>(null);
   // Mr Opus Review modal
@@ -147,6 +151,7 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
     setReviewOpen(false);
     setAiInstruction(null);
     setAppliedIndices(new Map());
+    setApplySnapshots(new Map());
     setApplyAllSummary(null);
     setOpusModalOpen(false);
   }, [selectedArticleId]);
@@ -213,6 +218,7 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
       onSuccess: () => {
         setEditedContent(null);
         setAppliedIndices(new Map());
+        setApplySnapshots(new Map());
         setLastSaved(new Date());
         setDiffOpen(false);
         setReviewOpen(false);
@@ -224,17 +230,20 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
     await revertToLastRevision(wpPostId);
     setEditedContent(null);
     setAppliedIndices(new Map());
+    setApplySnapshots(new Map());
     await queryClient.invalidateQueries({ queryKey: ['post-content', wpPostId] });
   }
 
   const handleApplyRecommendation = useCallback(
     (rec: LinkRecommendation, recIndex: number, keepText?: boolean) => {
       // Test if this recommendation can be applied
-      const result = applyRecommendation(rec, currentContent, keepText);
+      const before = currentContent;
+      const result = applyRecommendation(rec, before, keepText);
 
       if (result.success) {
         setEditedContent(result.modifiedContent);
         setAppliedIndices((prev) => new Map(prev).set(recIndex, keepText ?? false));
+        setApplySnapshots((prev) => new Map(prev).set(recIndex, { before, after: result.modifiedContent }));
         setLastAppliedRec(rec);
 
         // Mark in the status tracker
@@ -269,6 +278,7 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
 
     let runningContent = currentContent;
     const newAppliedIndices = new Map(appliedIndices);
+    const newSnapshots = new Map(applySnapshots);
     const articleStatuses = { ...(recStatuses[selectedArticleId] ?? {}) };
     let applied = 0;
     let needsManual = 0;
@@ -280,10 +290,12 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
       if (existing === 'applied' || existing === 'skipped' || existing === 'needs-manual') return;
 
       const keepText = false;
-      const result = applyRecommendation(rec, runningContent, keepText);
+      const before = runningContent;
+      const result = applyRecommendation(rec, before, keepText);
       if (result.success) {
         runningContent = result.modifiedContent;
         newAppliedIndices.set(idx, keepText);
+        newSnapshots.set(idx, { before, after: result.modifiedContent });
         articleStatuses[idx] = 'applied';
         applied += 1;
       } else {
@@ -299,6 +311,7 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
 
     setEditedContent(runningContent);
     setAppliedIndices(newAppliedIndices);
+    setApplySnapshots(newSnapshots);
     setRecStatuses((prev) => ({ ...prev, [selectedArticleId]: articleStatuses }));
 
     const total = applied + needsManual;
@@ -307,14 +320,38 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
     if (needsManual > 0) parts.push(`${needsManual} need${needsManual === 1 ? 's' : ''} manual placement.`);
     if (skipped > 0) parts.push(`${skipped} previously skipped.`);
     setApplyAllSummary(parts.join(' '));
-  }, [selectedArticle, selectedArticleId, currentContent, appliedIndices, recStatuses]);
+  }, [selectedArticle, selectedArticleId, currentContent, appliedIndices, applySnapshots, recStatuses]);
 
-  // Mark a recommendation as pending again so Apply-all will re-process it.
-  // Does NOT revert the text change — use the Revert button for a full rollback.
-  // Intentional: trying to reverse a single rec would often collide with
-  // manual placements or Mr Opus edits layered on top.
+  // Undo a single applied recommendation. Tries snapshot restore first
+  // (clean undo when nothing else has changed since this apply); falls back
+  // to targeted <a> removal so undo still works after subsequent applies or
+  // Mr Opus edits have layered on top. Without this, undoing then re-placing
+  // elsewhere produces a duplicate link.
   const handleUndoRecommendation = useCallback(
     (recIndex: number) => {
+      const snap = applySnapshots.get(recIndex);
+      const rec = selectedArticle?.recommendations[recIndex];
+
+      if (snap && rec) {
+        if (currentContent === snap.after) {
+          // Nothing has touched the article since this apply — exact restore.
+          setEditedContent(snap.before === originalContent ? null : snap.before);
+        } else if (rec.targetUrl) {
+          // Other changes layered on top. Find the <a href=URL> instance that
+          // exists in current but didn't in the pre-apply snapshot, and remove
+          // it. Multiset-aware so existing same-URL links aren't touched.
+          const reverted = removeAddedLinkInstance(currentContent, snap.before, rec.targetUrl);
+          if (reverted !== currentContent) {
+            setEditedContent(reverted === originalContent ? null : reverted);
+          }
+        }
+      }
+
+      setApplySnapshots((prev) => {
+        const next = new Map(prev);
+        next.delete(recIndex);
+        return next;
+      });
       setAppliedIndices((prev) => {
         const next = new Map(prev);
         next.delete(recIndex);
@@ -328,7 +365,7 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
         });
       }
     },
-    [selectedArticleId],
+    [selectedArticle, selectedArticleId, currentContent, originalContent, applySnapshots],
   );
 
   const handleTellMeWhere = useCallback((rec: LinkRecommendation) => {
@@ -345,9 +382,11 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
 
   const handleApplyAtPlacement = useCallback(
     (rec: LinkRecommendation, recIndex: number, option: PlacementOption) => {
-      const result = applyAtPlacement(rec, currentContent, option);
+      const before = currentContent;
+      const result = applyAtPlacement(rec, before, option);
       if (result.success) {
         setEditedContent(result.modifiedContent);
+        setApplySnapshots((prev) => new Map(prev).set(recIndex, { before, after: result.modifiedContent }));
         setLastAppliedRec(rec);
         if (selectedArticleId) {
           handleUpdateRecStatus(selectedArticleId, recIndex, 'applied');
@@ -394,9 +433,11 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
       if (!rec.targetUrl) return;
       const anchorText = (anchorOverride ?? rec.anchor ?? '').trim();
       if (!anchorText) return;
-      const result = applyLinkRelocation(currentContent, anchorText, rec.targetUrl, option.insertAt);
+      const before = currentContent;
+      const result = applyLinkRelocation(before, anchorText, rec.targetUrl, option.insertAt);
       if (result.success) {
         setEditedContent(result.modifiedContent);
+        setApplySnapshots((prev) => new Map(prev).set(recIndex, { before, after: result.modifiedContent }));
         setLastAppliedRec(rec);
         if (selectedArticleId) {
           handleUpdateRecStatus(selectedArticleId, recIndex, 'applied');

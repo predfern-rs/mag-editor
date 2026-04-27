@@ -157,6 +157,52 @@ function applyRemoveRecommendation(rec: LinkRecommendation, content: string, kee
 }
 
 /**
+ * Remove the single <a href=url> instance that was newly added relative to
+ * `beforeContent`. Multiset-aware: if the URL already had links pointing to it
+ * before the apply, those instances are preserved. Used by per-rec Undo to
+ * cleanly remove just the link this apply inserted, even when other changes
+ * have layered on top of `currentContent` since.
+ *
+ * Returns currentContent unchanged if no new instance can be identified.
+ */
+export function removeAddedLinkInstance(
+  currentContent: string,
+  beforeContent: string,
+  url: string,
+): string {
+  if (!url) return currentContent;
+  const urls = [url, url.endsWith('/') ? url.slice(0, -1) : url + '/'];
+  const anchorBody = `(?:(?!</a>)[\\s\\S])*?`;
+
+  for (const tryUrl of urls) {
+    const escapedUrl = tryUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const linkRegex = new RegExp(`<a\\s[^>]*href="${escapedUrl}"[^>]*>${anchorBody}</a>`, 'gi');
+
+    const beforeMatches = [...beforeContent.matchAll(linkRegex)].map((m) => m[0]);
+    const currentMatches = [...currentContent.matchAll(linkRegex)].map((m) => m[0]);
+    if (currentMatches.length === 0) continue;
+
+    const beforeCounts = new Map<string, number>();
+    for (const m of beforeMatches) beforeCounts.set(m, (beforeCounts.get(m) ?? 0) + 1);
+
+    for (const m of currentMatches) {
+      const remaining = beforeCounts.get(m) ?? 0;
+      if (remaining > 0) {
+        beforeCounts.set(m, remaining - 1);
+        continue;
+      }
+      // First match in current that wasn't in before: this is the inserted one.
+      const idx = currentContent.indexOf(m);
+      if (idx >= 0) {
+        return currentContent.substring(0, idx) + currentContent.substring(idx + m.length);
+      }
+    }
+  }
+
+  return currentContent;
+}
+
+/**
  * Try to apply the suggested sentence intelligently.
  *
  * Strategy:
