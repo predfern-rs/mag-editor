@@ -1,4 +1,6 @@
+import { useMemo } from 'react';
 import type { ArticleUrls } from '../../lib/url-mapping';
+import { renderPreviewHtml } from '../../lib/preview-html';
 
 interface ContentPreviewModalProps {
   isOpen: boolean;
@@ -21,6 +23,8 @@ export function ContentPreviewModal({
   liveUrl,
   articleUrls,
 }: ContentPreviewModalProps) {
+  const renderedHtml = useMemo(() => (isOpen ? renderPreviewHtml(html) : ''), [html, isOpen]);
+
   if (!isOpen) return null;
 
   const wpUrl = articleUrls?.wordpress || liveUrl;
@@ -89,7 +93,7 @@ export function ContentPreviewModal({
           <div className="max-w-3xl mx-auto px-8 py-6">
             <div
               className="prose prose-sm max-w-none content-preview"
-              dangerouslySetInnerHTML={{ __html: html }}
+              dangerouslySetInnerHTML={{ __html: renderedHtml }}
             />
           </div>
         </div>
