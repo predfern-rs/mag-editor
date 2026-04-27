@@ -12,8 +12,17 @@ import { ReviewPreview } from '../components/editor/ReviewPreview';
 import { useUpdatePostContent } from '../hooks/usePostContent';
 import { listPosts } from '../api/posts';
 import { getPostContent, revertToLastRevision } from '../api/content';
-import { applyRecommendation, findPlacementOptions, applyAtPlacement, removeAddedLinkInstance } from '../lib/smart-apply';
+import {
+  applyRecommendation,
+  findPlacementOptions,
+  applyAtPlacement,
+  removeAddedLinkInstance,
+  findCarouselPlacements,
+  removeCarouselBlock,
+  moveCarouselToBottom,
+} from '../lib/smart-apply';
 import type { PlacementOption } from '../lib/smart-apply';
+import type { CarouselStatus } from '../components/report/CarouselRecommendation';
 import {
   parseLocationHint,
   findSectionByHint,
@@ -33,6 +42,7 @@ const LS_KEY_STATUSES = 'mag-editor-report-statuses';
 const LS_KEY_REC = 'mag-editor-rec-statuses';
 const LS_KEY_REPORT = 'mag-editor-saved-report';
 const LS_KEY_SELECTED = 'mag-editor-selected-article';
+const LS_KEY_CAROUSEL = 'mag-editor-carousel-statuses';
 
 function loadFromStorage<T>(key: string, fallback: T): T {
   try {
@@ -73,10 +83,14 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
   const [recStatuses, setRecStatuses] = useState<Record<string, Record<number, RecStatus>>>(() =>
     loadFromStorage(LS_KEY_REC, {}),
   );
+  const [carouselStatuses, setCarouselStatuses] = useState<Record<string, CarouselStatus>>(() =>
+    loadFromStorage(LS_KEY_CAROUSEL, {}),
+  );
 
   // Persist to localStorage
   useEffect(() => { saveToStorage(LS_KEY_STATUSES, articleStatuses); }, [articleStatuses]);
   useEffect(() => { saveToStorage(LS_KEY_REC, recStatuses); }, [recStatuses]);
+  useEffect(() => { saveToStorage(LS_KEY_CAROUSEL, carouselStatuses); }, [carouselStatuses]);
 
   // ── Selected article ────────────────────────────────────────────────
   const selectedArticle = useMemo(
@@ -129,6 +143,9 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
   // Lets Undo properly remove the inserted link (snapshot restore when nothing
   // has layered on top, or targeted <a> removal when it has).
   const [applySnapshots, setApplySnapshots] = useState<Map<number, { before: string; after: string }>>(new Map());
+  // Snapshot for the carousel apply (move/remove). Single slot — at most one
+  // carousel action per article. Cleared on article switch / save / revert.
+  const [carouselSnapshot, setCarouselSnapshot] = useState<{ before: string } | null>(null);
   // Summary banner shown after "Apply all fixes" (e.g. "Applied 7 of 9. 2 need manual placement.")
   const [applyAllSummary, setApplyAllSummary] = useState<string | null>(null);
   // Mr Opus Review modal
@@ -152,6 +169,7 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
     setAiInstruction(null);
     setAppliedIndices(new Map());
     setApplySnapshots(new Map());
+    setCarouselSnapshot(null);
     setApplyAllSummary(null);
     setOpusModalOpen(false);
   }, [selectedArticleId]);
@@ -219,6 +237,7 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
         setEditedContent(null);
         setAppliedIndices(new Map());
         setApplySnapshots(new Map());
+        setCarouselSnapshot(null);
         setLastSaved(new Date());
         setDiffOpen(false);
         setReviewOpen(false);
@@ -231,6 +250,7 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
     setEditedContent(null);
     setAppliedIndices(new Map());
     setApplySnapshots(new Map());
+    setCarouselSnapshot(null);
     await queryClient.invalidateQueries({ queryKey: ['post-content', wpPostId] });
   }
 
@@ -447,6 +467,60 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
     [currentContent, selectedArticleId, handleUpdateRecStatus],
   );
 
+  // ── Carousel apply handlers ─────────────────────────────────────────
+  const handleFindCarouselPlacements = useCallback(
+    (): PlacementOption[] => findCarouselPlacements(currentContent),
+    [currentContent],
+  );
+
+  const handleApplyCarouselMove = useCallback(
+    (placement: PlacementOption, subheading?: string) => {
+      if (!selectedArticleId) return;
+      const before = currentContent;
+      const result = moveCarouselToBottom(before, placement, { subheading });
+      if (result.success) {
+        setEditedContent(result.modifiedContent);
+        setCarouselSnapshot({ before });
+        setCarouselStatuses((prev) => ({ ...prev, [selectedArticleId]: 'applied' }));
+      } else {
+        // Surface the failure so the user knows why nothing visible happened.
+        alert(`Couldn't move the carousel: ${result.explanation}`);
+      }
+    },
+    [currentContent, selectedArticleId],
+  );
+
+  const handleApplyCarouselRemove = useCallback(() => {
+    if (!selectedArticleId) return;
+    const before = currentContent;
+    const result = removeCarouselBlock(before);
+    if (result.success) {
+      setEditedContent(result.modifiedContent);
+      setCarouselSnapshot({ before });
+      setCarouselStatuses((prev) => ({ ...prev, [selectedArticleId]: 'applied' }));
+    } else {
+      alert(`Couldn't remove the carousel: ${result.explanation}`);
+    }
+  }, [currentContent, selectedArticleId]);
+
+  const handleUndoCarousel = useCallback(() => {
+    if (!selectedArticleId) return;
+    if (carouselSnapshot) {
+      setEditedContent(carouselSnapshot.before === originalContent ? null : carouselSnapshot.before);
+      setCarouselSnapshot(null);
+    }
+    setCarouselStatuses((prev) => {
+      const next = { ...prev };
+      delete next[selectedArticleId];
+      return next;
+    });
+  }, [selectedArticleId, carouselSnapshot, originalContent]);
+
+  const handleSkipCarousel = useCallback(() => {
+    if (!selectedArticleId) return;
+    setCarouselStatuses((prev) => ({ ...prev, [selectedArticleId]: 'skipped' }));
+  }, [selectedArticleId]);
+
   function handleUpdateRecStatus(articleId: string, index: number, status: 'applied' | 'skipped') {
     setRecStatuses((prev) => ({
       ...prev,
@@ -502,15 +576,32 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
         <div className="flex items-center gap-2">
           <button
             onClick={() => {
+              if (!confirm('Clear cached report and reload? Your statuses will be wiped.')) return;
+              localStorage.removeItem(LS_KEY_REPORT);
+              localStorage.removeItem(LS_KEY_SELECTED);
+              localStorage.removeItem(LS_KEY_STATUSES);
+              localStorage.removeItem(LS_KEY_REC);
+              localStorage.removeItem(LS_KEY_CAROUSEL);
+              location.reload();
+            }}
+            className="px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 transition-colors"
+            title="Wipe localStorage cache and reload — use after deploying parser changes"
+          >
+            Clear cache
+          </button>
+          <button
+            onClick={() => {
               if (!confirm('Upload a new report? This will clear all current progress.')) return;
               setReport(null);
               setSelectedArticleId(null);
               setArticleStatuses({});
               setRecStatuses({});
+              setCarouselStatuses({});
               saveToStorage(LS_KEY_REPORT, null);
               saveToStorage(LS_KEY_SELECTED, null);
               saveToStorage(LS_KEY_STATUSES, {});
               saveToStorage(LS_KEY_REC, {});
+              saveToStorage(LS_KEY_CAROUSEL, {});
             }}
             className="px-3 py-1.5 text-xs font-medium text-gray-500 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
           >
@@ -609,6 +700,12 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
                       }
                       renderedHtml={contentData?.content.rendered}
                       wpPostId={wpPostId}
+                      carouselStatus={carouselStatuses[selectedArticle.id] ?? 'pending'}
+                      onApplyCarouselMove={handleApplyCarouselMove}
+                      onApplyCarouselRemove={handleApplyCarouselRemove}
+                      onUndoCarousel={handleUndoCarousel}
+                      onSkipCarousel={handleSkipCarousel}
+                      onFindCarouselPlacements={handleFindCarouselPlacements}
                     />
                   </div>
 

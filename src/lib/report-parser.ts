@@ -31,6 +31,20 @@ export interface ArticleAudit {
   cluster: string;
   reasoning: string;
   recommendations: LinkRecommendation[];
+  /**
+   * v2 reports include a per-article carousel verdict via `.carousel-badge`.
+   * Older reports omit it; consumers must treat this as optional.
+   */
+  carousel?: CarouselRecommendation;
+}
+
+export type CarouselAction = 'keep' | 'move_to_bottom' | 'remove' | 'none';
+
+export interface CarouselRecommendation {
+  action: CarouselAction;
+  label: string;
+  positionPct?: number;
+  positionRegion?: 'TOP' | 'BOTTOM';
 }
 
 export interface LinkRecommendation {
@@ -172,6 +186,8 @@ export function parseAuditReport(htmlString: string): AuditReport {
       }
     }
 
+    const carousel = parseCarouselRecommendation(card, reasoning);
+
     articles.push({
       id,
       title: articleTitle,
@@ -182,8 +198,73 @@ export function parseAuditReport(htmlString: string): AuditReport {
       cluster,
       reasoning,
       recommendations,
+      ...(carousel ? { carousel } : {}),
     });
   }
 
   return { title, generatedDate, stats, clusters, articles };
+}
+
+/**
+ * Read v2 report carousel data from an article card. Returns undefined for
+ * v1 reports (no `.carousel-badge` present) so legacy reports keep working.
+ *
+ * The badge class encodes the verdict:
+ *   carousel-keep    → action 'keep'
+ *   carousel-move    → action 'move_to_bottom'
+ *   carousel-remove  → action 'remove'
+ *   carousel-none    → action 'none'
+ *
+ * The reasoning text usually carries a `[Carousel correction: ... block at N% (TOP|BOTTOM) ...]`
+ * clause we mine for the position-pct so the UI can say "currently at 8%".
+ */
+function parseCarouselRecommendation(
+  card: Element,
+  reasoning: string,
+): CarouselRecommendation | undefined {
+  // The carousel badge usually lives at the bottom of the article card, but
+  // v2 report HTML has a stray closing </div> that prematurely closes the
+  // .article-card so the badge ends up as a SIBLING after JSDOM auto-fixes
+  // the malformed markup. Look in both places to be tolerant of either.
+  let badge = card.querySelector('.carousel-badge');
+  if (!badge) {
+    let cursor: Element | null = card.nextElementSibling;
+    while (cursor && !cursor.classList.contains('article-card')) {
+      const found = cursor.classList.contains('carousel-badge')
+        ? cursor
+        : cursor.querySelector('.carousel-badge');
+      if (found) {
+        badge = found;
+        break;
+      }
+      cursor = cursor.nextElementSibling;
+    }
+  }
+  if (!badge) return undefined;
+
+  const label = txt(badge);
+  let action: CarouselAction;
+  if (badge.classList.contains('carousel-keep')) action = 'keep';
+  else if (badge.classList.contains('carousel-move')) action = 'move_to_bottom';
+  else if (badge.classList.contains('carousel-remove')) action = 'remove';
+  else if (badge.classList.contains('carousel-none')) action = 'none';
+  else {
+    // Fallback: parse the label text. Ensures we don't drop a future variant.
+    const upper = label.toUpperCase();
+    if (upper.includes('MOVE')) action = 'move_to_bottom';
+    else if (upper.includes('REMOVE')) action = 'remove';
+    else if (upper.includes('KEEP')) action = 'keep';
+    else action = 'none';
+  }
+
+  const positionMatch = reasoning.match(/block at (\d+)%\s*\((TOP|BOTTOM)\)/i);
+  const positionPct = positionMatch ? Number(positionMatch[1]) : undefined;
+  const positionRegion = positionMatch ? (positionMatch[2]!.toUpperCase() as 'TOP' | 'BOTTOM') : undefined;
+
+  return {
+    action,
+    label,
+    ...(positionPct !== undefined ? { positionPct } : {}),
+    ...(positionRegion ? { positionRegion } : {}),
+  };
 }

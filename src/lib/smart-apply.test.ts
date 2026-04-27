@@ -6,6 +6,10 @@ import {
   extractSentenceHtml,
   findMatchingSentenceText,
   removeAddedLinkInstance,
+  findCarouselBlock,
+  removeCarouselBlock,
+  findCarouselPlacements,
+  moveCarouselToBottom,
 } from './smart-apply';
 import type { LinkRecommendation } from './report-parser';
 
@@ -312,5 +316,256 @@ describe('removeAddedLinkInstance', () => {
     const current = '<p>None.</p><p><a href="/x">A</a> and <a href="/x">B</a>.</p>';
     const result = removeAddedLinkInstance(current, before, '/x');
     expect(result).toBe('<p>None.</p><p> and <a href="/x">B</a>.</p>');
+  });
+});
+
+// ── Carousel helpers ───────────────────────────────────────────────
+
+const CAROUSEL_BLOCK = '<!-- wp:shortcode -->\n[global_carousel_people_list id="1"]\n<!-- /wp:shortcode -->';
+const CAROUSEL_BLOCK_NO_ID = '<!-- wp:shortcode -->\n[global_carousel_people_list]\n<!-- /wp:shortcode -->';
+
+const ARTICLE_HEAD = [
+  '<!-- wp:paragraph --><p>Intro paragraph.</p><!-- /wp:paragraph -->',
+  '<!-- wp:heading --><h2>First section</h2><!-- /wp:heading -->',
+  '<!-- wp:paragraph --><p>First body.</p><!-- /wp:paragraph -->',
+].join('\n\n');
+
+const ARTICLE_TAIL = [
+  '<!-- wp:heading --><h2>Second section</h2><!-- /wp:heading -->',
+  '<!-- wp:paragraph --><p>Second body.</p><!-- /wp:paragraph -->',
+  '<!-- wp:heading --><h2>Wrapping up</h2><!-- /wp:heading -->',
+  '<!-- wp:paragraph --><p>Closing thoughts.</p><!-- /wp:paragraph -->',
+].join('\n\n');
+
+describe('findCarouselBlock', () => {
+  it('finds a carousel block with id attribute', () => {
+    const content = `${ARTICLE_HEAD}\n\n${CAROUSEL_BLOCK}\n\n${ARTICLE_TAIL}`;
+    const match = findCarouselBlock(content);
+    expect(match).not.toBeNull();
+    expect(match!.markup).toContain('global_carousel_people_list');
+    expect(content.slice(match!.startIndex, match!.endIndex)).toBe(match!.markup);
+  });
+
+  it('finds a carousel block without an id attribute', () => {
+    const content = `${ARTICLE_HEAD}\n\n${CAROUSEL_BLOCK_NO_ID}\n\n${ARTICLE_TAIL}`;
+    const match = findCarouselBlock(content);
+    expect(match).not.toBeNull();
+    expect(match!.markup).toContain('[global_carousel_people_list]');
+  });
+
+  it('returns null when no carousel block is present', () => {
+    const content = `${ARTICLE_HEAD}\n\n${ARTICLE_TAIL}`;
+    expect(findCarouselBlock(content)).toBeNull();
+  });
+
+  it('ignores other shortcodes', () => {
+    const otherShortcode = '<!-- wp:shortcode -->\n[some_other_shortcode]\n<!-- /wp:shortcode -->';
+    const content = `${ARTICLE_HEAD}\n\n${otherShortcode}\n\n${ARTICLE_TAIL}`;
+    expect(findCarouselBlock(content)).toBeNull();
+  });
+
+  it('finds the carousel when wrapped in a paragraph block', () => {
+    const para = '<!-- wp:paragraph -->\n<p>[global_carousel_people_list id="1"]</p>\n<!-- /wp:paragraph -->';
+    const content = `${ARTICLE_HEAD}\n\n${para}\n\n${ARTICLE_TAIL}`;
+    const match = findCarouselBlock(content);
+    expect(match).not.toBeNull();
+    expect(match!.markup).toContain('global_carousel_people_list');
+  });
+
+  it('finds the carousel when wrapped in a wp:html block', () => {
+    const htmlBlock = '<!-- wp:html -->\n[global_carousel_people_list id="1"]\n<!-- /wp:html -->';
+    const content = `${ARTICLE_HEAD}\n\n${htmlBlock}\n\n${ARTICLE_TAIL}`;
+    const match = findCarouselBlock(content);
+    expect(match).not.toBeNull();
+    expect(match!.markup).toContain('global_carousel_people_list');
+  });
+
+  it('finds the carousel when bare in raw content (no wp block wrapper)', () => {
+    const content = `${ARTICLE_HEAD}\n\n[global_carousel_people_list id="1"]\n\n${ARTICLE_TAIL}`;
+    const match = findCarouselBlock(content);
+    expect(match).not.toBeNull();
+    expect(match!.markup).toContain('global_carousel_people_list');
+  });
+});
+
+describe('removeCarouselBlock', () => {
+  it('removes the carousel block when present', () => {
+    const content = `${ARTICLE_HEAD}\n\n${CAROUSEL_BLOCK}\n\n${ARTICLE_TAIL}`;
+    const result = removeCarouselBlock(content);
+    expect(result.success).toBe(true);
+    expect(result.modifiedContent).not.toContain('global_carousel_people_list');
+    expect(result.modifiedContent).toContain('First section');
+    expect(result.modifiedContent).toContain('Wrapping up');
+  });
+
+  it('is a no-op when no carousel block exists', () => {
+    const content = `${ARTICLE_HEAD}\n\n${ARTICLE_TAIL}`;
+    const result = removeCarouselBlock(content);
+    expect(result.success).toBe(false);
+    expect(result.modifiedContent).toBe(content);
+  });
+
+  it('is idempotent: calling twice produces the same result as once', () => {
+    const content = `${ARTICLE_HEAD}\n\n${CAROUSEL_BLOCK}\n\n${ARTICLE_TAIL}`;
+    const first = removeCarouselBlock(content);
+    const second = removeCarouselBlock(first.modifiedContent);
+    expect(second.success).toBe(false);
+    expect(second.modifiedContent).toBe(first.modifiedContent);
+  });
+});
+
+describe('findCarouselPlacements', () => {
+  it('always offers an end-of-article option', () => {
+    const content = `${ARTICLE_HEAD}\n\n${ARTICLE_TAIL}`;
+    const opts = findCarouselPlacements(content);
+    expect(opts.length).toBeGreaterThan(0);
+    expect(opts[0]!.insertAt).toBe(content.length);
+    expect(opts[0]!.label.toLowerCase()).toContain('end of the article');
+  });
+
+  it('offers heading-relative options when headings exist', () => {
+    const content = `${ARTICLE_HEAD}\n\n${ARTICLE_TAIL}`;
+    const opts = findCarouselPlacements(content);
+    const labels = opts.map((o) => o.label).join('|');
+    expect(labels).toContain('Wrapping up');
+  });
+
+  it('returns the end-only option for content with no headings', () => {
+    const content = '<!-- wp:paragraph --><p>Just one paragraph.</p><!-- /wp:paragraph -->';
+    const opts = findCarouselPlacements(content);
+    expect(opts).toHaveLength(1);
+    expect(opts[0]!.insertAt).toBe(content.length);
+  });
+
+  it('puts the Related Reading option at the top when section exists', () => {
+    const relatedReadingHeading = '<!-- wp:heading -->\n<h2>Related Reading</h2>\n<!-- /wp:heading -->';
+    const relatedReadingList = [
+      '<!-- wp:list -->',
+      '<ul><li><a href="/foo">Foo</a></li><li><a href="/bar">Bar</a></li></ul>',
+      '<!-- /wp:list -->',
+    ].join('\n');
+    const content = `${ARTICLE_HEAD}\n\n${ARTICLE_TAIL}\n\n${relatedReadingHeading}\n\n${relatedReadingList}`;
+    const opts = findCarouselPlacements(content);
+    expect(opts.length).toBeGreaterThan(1);
+    expect(opts[0]!.label.toLowerCase()).toContain('related reading');
+    expect(opts[0]!.score).toBe(1);
+    // The end-of-article option should be demoted below the Related Reading one
+    const endOption = opts.find((o) => o.insertAt === content.length);
+    expect(endOption).toBeDefined();
+    expect(endOption!.score).toBeLessThan(1);
+  });
+
+  it('detects Related Reading via bold-label paragraph too', () => {
+    const boldLabel = '<!-- wp:paragraph -->\n<p><strong>Related Reading:</strong></p>\n<!-- /wp:paragraph -->';
+    const content = `${ARTICLE_HEAD}\n\n${ARTICLE_TAIL}\n\n${boldLabel}`;
+    const opts = findCarouselPlacements(content);
+    expect(opts[0]!.label.toLowerCase()).toContain('related reading');
+  });
+
+  // Localised Related Reading section markers — Ridestore caters to 9 langs.
+  const LOCALISED_HEADINGS: Array<[string, string]> = [
+    ['IT', 'Letture correlate'],
+    ['IT', 'Articoli correlati'],
+    ['DE', 'Verwandte Artikel'],
+    ['DE', 'Ähnliche Artikel'],
+    ['FR', 'Articles liés'],
+    ['FR', 'À lire aussi'],
+    ['ES', 'Artículos relacionados'],
+    ['ES', 'Lecturas relacionadas'],
+    ['PL', 'Powiązane artykuły'],
+    ['PL', 'Zobacz też'],
+    ['NL', 'Gerelateerde artikelen'],
+    ['NL', 'Lees ook'],
+    ['SV', 'Relaterade artiklar'],
+    ['SV', 'Läs också'],
+    ['FI', 'Liittyvät artikkelit'],
+    ['FI', 'Lue myös'],
+  ];
+
+  for (const [lang, heading] of LOCALISED_HEADINGS) {
+    it(`detects localised Related Reading heading: ${lang} "${heading}"`, () => {
+      const block = `<!-- wp:heading -->\n<h2>${heading}</h2>\n<!-- /wp:heading -->`;
+      const content = `${ARTICLE_HEAD}\n\n${ARTICLE_TAIL}\n\n${block}`;
+      const opts = findCarouselPlacements(content);
+      // The localised heading should be the top-scored option.
+      expect(opts[0]!.score).toBe(1);
+      expect(opts[0]!.label).toContain(heading);
+    });
+  }
+});
+
+describe('moveCarouselToBottom', () => {
+  it('moves a top-positioned carousel to the end of the article by default', () => {
+    const content = `${CAROUSEL_BLOCK}\n\n${ARTICLE_HEAD}\n\n${ARTICLE_TAIL}`;
+    const result = moveCarouselToBottom(content);
+    expect(result.success).toBe(true);
+    expect(result.modifiedContent).not.toContain(`${CAROUSEL_BLOCK}\n\n${ARTICLE_HEAD}`);
+    // Carousel still present
+    const stillThere = findCarouselBlock(result.modifiedContent);
+    expect(stillThere).not.toBeNull();
+    // Now sits after the body content
+    expect(stillThere!.startIndex).toBeGreaterThan(result.modifiedContent.indexOf('Wrapping up'));
+  });
+
+  it('moves carousel to a chosen placement option', () => {
+    const content = `${CAROUSEL_BLOCK}\n\n${ARTICLE_HEAD}\n\n${ARTICLE_TAIL}`;
+    // Pick the "Before final heading" option
+    const removed = removeCarouselBlock(content).modifiedContent;
+    const placement = findCarouselPlacements(removed).find((o) => o.label.includes('Before final heading'));
+    expect(placement).toBeDefined();
+    // findCarouselPlacements is computed against the original content elsewhere; here we
+    // pass it back through moveCarouselToBottom which should still place it correctly.
+    const result = moveCarouselToBottom(content, placement);
+    expect(result.success).toBe(true);
+    // The carousel must appear before "Wrapping up"
+    const moved = result.modifiedContent;
+    const carouselIdx = moved.indexOf('global_carousel_people_list');
+    const wrappingIdx = moved.indexOf('Wrapping up');
+    expect(carouselIdx).toBeGreaterThan(0);
+    expect(carouselIdx).toBeLessThan(wrappingIdx);
+  });
+
+  it('fails gracefully when there is no carousel to move', () => {
+    const content = `${ARTICLE_HEAD}\n\n${ARTICLE_TAIL}`;
+    const result = moveCarouselToBottom(content);
+    expect(result.success).toBe(false);
+    expect(result.modifiedContent).toBe(content);
+  });
+
+  it('does not duplicate the carousel block', () => {
+    const content = `${CAROUSEL_BLOCK}\n\n${ARTICLE_HEAD}\n\n${ARTICLE_TAIL}`;
+    const result = moveCarouselToBottom(content);
+    const occurrences = (result.modifiedContent.match(/global_carousel_people_list/g) || []).length;
+    expect(occurrences).toBe(1);
+  });
+
+  it('prepends a bold subheading paragraph when provided', () => {
+    const content = `${CAROUSEL_BLOCK}\n\n${ARTICLE_HEAD}\n\n${ARTICLE_TAIL}`;
+    const result = moveCarouselToBottom(content, undefined, { subheading: 'Meet the team' });
+    expect(result.success).toBe(true);
+    const subheadingBlock = '<!-- wp:paragraph -->\n<p><strong>Meet the team</strong></p>\n<!-- /wp:paragraph -->';
+    expect(result.modifiedContent).toContain(subheadingBlock);
+    // Subheading must precede the carousel block
+    const subIdx = result.modifiedContent.indexOf('Meet the team');
+    const carIdx = result.modifiedContent.indexOf('global_carousel_people_list');
+    expect(subIdx).toBeGreaterThan(0);
+    expect(subIdx).toBeLessThan(carIdx);
+  });
+
+  it('omits the subheading block when the value is empty or whitespace', () => {
+    const content = `${CAROUSEL_BLOCK}\n\n${ARTICLE_HEAD}\n\n${ARTICLE_TAIL}`;
+    const blank = moveCarouselToBottom(content, undefined, { subheading: '' });
+    const whitespace = moveCarouselToBottom(content, undefined, { subheading: '   ' });
+    const undef = moveCarouselToBottom(content);
+    expect(blank.modifiedContent).toBe(undef.modifiedContent);
+    expect(whitespace.modifiedContent).toBe(undef.modifiedContent);
+    expect(blank.modifiedContent).not.toContain('<strong>');
+  });
+
+  it('escapes HTML special characters in the subheading text', () => {
+    const content = `${CAROUSEL_BLOCK}\n\n${ARTICLE_HEAD}\n\n${ARTICLE_TAIL}`;
+    const result = moveCarouselToBottom(content, undefined, { subheading: 'Pros & cons <experts>' });
+    expect(result.modifiedContent).toContain('<p><strong>Pros &amp; cons &lt;experts&gt;</strong></p>');
+    expect(result.modifiedContent).not.toContain('<experts>');
   });
 });

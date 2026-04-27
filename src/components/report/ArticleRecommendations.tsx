@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { ArticleAudit, LinkRecommendation } from '../../lib/report-parser';
 import type { PlacementOption } from '../../lib/smart-apply';
 import { RecommendationCard } from './RecommendationCard';
+import { CarouselRecommendationCard, type CarouselStatus } from './CarouselRecommendation';
 import { ContentPreviewModal } from '../editor/ContentPreviewModal';
 import { getArticleUrls, detectSiteFromWpUrl } from '../../lib/url-mapping';
 import { getActiveSite } from '../../config';
@@ -28,6 +29,13 @@ interface ArticleRecommendationsProps {
   onUpdateRecStatus: (index: number, status: 'applied' | 'skipped') => void;
   renderedHtml?: string;
   wpPostId?: number;
+  // Carousel handlers — only used when article.carousel is defined (v2 reports).
+  carouselStatus?: CarouselStatus;
+  onApplyCarouselMove?: (placement: PlacementOption, subheading?: string) => void;
+  onApplyCarouselRemove?: () => void;
+  onUndoCarousel?: () => void;
+  onSkipCarousel?: () => void;
+  onFindCarouselPlacements?: () => PlacementOption[];
 }
 
 interface SectionDef {
@@ -81,6 +89,12 @@ export function ArticleRecommendations({
   onUpdateRecStatus,
   renderedHtml,
   wpPostId,
+  carouselStatus = 'pending',
+  onApplyCarouselMove,
+  onApplyCarouselRemove,
+  onUndoCarousel,
+  onSkipCarousel,
+  onFindCarouselPlacements,
 }: ArticleRecommendationsProps) {
   const [previewOpen, setPreviewOpen] = useState(false);
 
@@ -212,6 +226,22 @@ export function ArticleRecommendations({
             <p className="text-sm text-gray-700 leading-relaxed">
               {article.reasoning}
             </p>
+          </div>
+        )}
+
+        {/* Carousel recommendation (v2 reports only) */}
+        {article.carousel && (
+          <div className="mt-4">
+            <CarouselRecommendationCard
+              carousel={article.carousel}
+              status={carouselStatus}
+              onApplyMove={onApplyCarouselMove}
+              onApplyRemove={onApplyCarouselRemove}
+              onUndo={onUndoCarousel}
+              onSkip={onSkipCarousel}
+              onFindPlacements={onFindCarouselPlacements}
+              onPreview={onPreviewChanges}
+            />
           </div>
         )}
       </div>

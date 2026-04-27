@@ -69,14 +69,77 @@ export function findCleanupTargets(content: string): number[] {
   return [...indices].sort((a, b) => a - b);
 }
 
+// Section markers for "Related Reading"-style end-of-article link lists,
+// across the languages Ridestore (Dope, Montec, Ridestore) caters to:
+// EN, IT, DE, FR, ES, PL, NL, SV, FI. Patterns are anchored at start and
+// case-insensitive; trailing colons/dashes are stripped before matching.
+//
+// Trailing boundary uses `(?=\s|$)` not `\b` because JS `\b` is ASCII-only
+// and won't match between a Unicode letter (ż, å, ä) and end-of-string.
 const RELATED_READING_PATTERNS: RegExp[] = [
-  /^related\s+reading\b/i,
-  /^related\s+articles?\b/i,
-  /^more\s+from\s+us\b/i,
-  /^see\s+also\b/i,
-  /^further\s+reading\b/i,
-  /^you\s+might\s+also\s+like\b/i,
-  /^other\s+articles?\b/i,
+  // English
+  /^related\s+reading(?=\s|$)/i,
+  /^related\s+articles?(?=\s|$)/i,
+  /^more\s+from\s+us(?=\s|$)/i,
+  /^see\s+also(?=\s|$)/i,
+  /^further\s+reading(?=\s|$)/i,
+  /^you\s+might\s+also\s+like(?=\s|$)/i,
+  /^other\s+articles?(?=\s|$)/i,
+  /^read\s+more(?=\s|$)/i,
+  // Italian
+  /^letture\s+correlate(?=\s|$)/i,
+  /^articoli\s+correlati(?=\s|$)/i,
+  /^da\s+leggere\s+anche(?=\s|$)/i,
+  /^leggi\s+anche(?=\s|$)/i,
+  /^potrebbero?\s+interessarti(?=\s|$)/i,
+  /^vedi\s+anche(?=\s|$)/i,
+  // German
+  /^verwandte\s+artikel(?=\s|$)/i,
+  /^ähnliche\s+artikel(?=\s|$)/i,
+  /^auch\s+interessant(?=\s|$)/i,
+  /^mehr\s+von\s+uns(?=\s|$)/i,
+  /^siehe\s+auch(?=\s|$)/i,
+  /^weiterlesen(?=\s|$)/i,
+  /^weitere\s+artikel(?=\s|$)/i,
+  /^das\s+könnte\s+dich\s+auch\s+interessieren(?=\s|$)/i,
+  // French
+  /^articles?\s+li[ée]s?(?=\s|$)/i,
+  /^articles?\s+similaires?(?=\s|$)/i,
+  /^[àa]\s+lire\s+aussi(?=\s|$)/i,
+  /^voir\s+aussi(?=\s|$)/i,
+  /^pour\s+aller\s+plus\s+loin(?=\s|$)/i,
+  /^lectures?\s+compl[ée]mentaires?(?=\s|$)/i,
+  // Spanish
+  /^art[ií]culos?\s+relacionad[oa]s?(?=\s|$)/i,
+  /^lecturas?\s+relacionadas?(?=\s|$)/i,
+  /^ver\s+tambi[ée]n(?=\s|$)/i,
+  /^tambi[ée]n\s+te\s+puede\s+interesar(?=\s|$)/i,
+  /^te\s+puede\s+interesar(?=\s|$)/i,
+  /^m[áa]s\s+art[ií]culos(?=\s|$)/i,
+  // Polish
+  /^powi[ąa]zane\s+artyku[łl]y(?=\s|$)/i,
+  /^zobacz\s+te[żz](?=\s|$)/i,
+  /^czytaj\s+r[óo]wnie[żz](?=\s|$)/i,
+  /^wi[ęe]cej\s+artyku[łl][óo]w(?=\s|$)/i,
+  /^polecane(?=\s|$)/i,
+  // Dutch
+  /^gerelateerde\s+artikelen(?=\s|$)/i,
+  /^zie\s+ook(?=\s|$)/i,
+  /^lees\s+ook(?=\s|$)/i,
+  /^meer\s+lezen(?=\s|$)/i,
+  /^meer\s+artikelen(?=\s|$)/i,
+  // Swedish
+  /^relaterade\s+artiklar(?=\s|$)/i,
+  /^l[äa]s\s+ocks[åa](?=\s|$)/i,
+  /^se\s+[äa]ven(?=\s|$)/i,
+  /^mer\s+fr[åa]n\s+oss(?=\s|$)/i,
+  /^fler\s+artiklar(?=\s|$)/i,
+  // Finnish
+  /^liittyv[äa]t\s+artikkelit(?=\s|$)/i,
+  /^lue\s+my[öo]s(?=\s|$)/i,
+  /^katso\s+my[öo]s(?=\s|$)/i,
+  /^aiheeseen\s+liittyv[äa][äa](?=\s|$)/i,
+  /^lis[äa][äa]\s+artikkeleita(?=\s|$)/i,
 ];
 
 /**
@@ -254,7 +317,7 @@ function findDanglingShopCalloutPairs(
  * section marker: either a real heading, or a bold-only paragraph used as a
  * structural label. Returns null for anything else.
  */
-function labelTextFor(block: ReturnType<typeof parseBlocks>[number]): string | null {
+export function labelTextFor(block: ReturnType<typeof parseBlocks>[number]): string | null {
   if (block.type === 'heading') {
     const m = block.innerContent.match(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i);
     return m ? stripHtmlAndEntities(m[1]!) : stripHtmlAndEntities(block.innerContent);

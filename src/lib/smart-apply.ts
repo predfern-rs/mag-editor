@@ -1,4 +1,6 @@
 import type { LinkRecommendation } from './report-parser';
+import { parseBlocks } from './block-parser';
+import { isRelatedReadingLabelText, labelTextFor } from './opus-cleanup';
 
 export interface ApplyResult {
   success: boolean;
@@ -862,4 +864,272 @@ function extractContextTerms(reason: string): string[] {
   // Deduplicate and prioritize longer terms
   const unique = [...new Set(terms)].sort((a, b) => b.length - a.length);
   return unique;
+}
+
+// ── Carousel apply ─────────────────────────────────────────────────
+
+export interface CarouselBlockMatch {
+  startIndex: number;
+  endIndex: number;
+  markup: string;
+}
+
+/**
+ * Locate the global_carousel_people_list shortcode block, regardless of id
+ * attribute or whitespace around it. Returns null when no such block exists.
+ *
+ * Uses the existing block parser so we honour the same boundaries as every
+ * other tool: the wp:shortcode opening comment through its matching closer.
+ */
+export function findCarouselBlock(content: string): CarouselBlockMatch | null {
+  // Step 1: any wp block whose innerContent contains the shortcode. This
+  // catches wp:shortcode (most common), wp:html, wp:paragraph wrappers, and
+  // anything else upstream may have wrapped it in.
+  const blocks = parseBlocks(content);
+  for (const block of blocks) {
+    if (!/\[\s*global_carousel_people_list\b/i.test(block.fullMarkup)) continue;
+    return {
+      startIndex: block.startIndex,
+      endIndex: block.endIndex,
+      markup: block.fullMarkup,
+    };
+  }
+
+  // Step 2: fallback — the shortcode sits in raw text outside any wp block
+  // comment. Match the bare shortcode call and treat it as the entire move
+  // unit, plus any wp:shortcode comment markers that wrap it.
+  const bareMatch = content.match(/\[\s*global_carousel_people_list[^\]]*\]/i);
+  if (!bareMatch || bareMatch.index === undefined) return null;
+
+  let startIndex = bareMatch.index;
+  let endIndex = startIndex + bareMatch[0].length;
+
+  // Extend backwards over any preceding wp:shortcode opening comment.
+  const beforeSlice = content.slice(0, startIndex);
+  const openMatch = beforeSlice.match(/<!--\s*wp:shortcode\s*-->\s*$/i);
+  if (openMatch) {
+    startIndex = openMatch.index!;
+  }
+
+  // Extend forwards over any following wp:shortcode closing comment.
+  const afterSlice = content.slice(endIndex);
+  const closeMatch = afterSlice.match(/^\s*<!--\s*\/wp:shortcode\s*-->/i);
+  if (closeMatch) {
+    endIndex = endIndex + closeMatch[0].length;
+  }
+
+  return {
+    startIndex,
+    endIndex,
+    markup: content.slice(startIndex, endIndex),
+  };
+}
+
+/**
+ * Remove the carousel block plus a single trailing or leading blank line so
+ * we don't leave a double newline gap. Idempotent: a second call returns the
+ * same content unchanged with success=false.
+ */
+export function removeCarouselBlock(content: string): ApplyResult {
+  const match = findCarouselBlock(content);
+  if (!match) {
+    return {
+      success: false,
+      modifiedContent: content,
+      explanation: 'No carousel block found in this article.',
+    };
+  }
+
+  // Trim one trailing newline run after the block, so we don't double-space.
+  let endIndex = match.endIndex;
+  while (endIndex < content.length && (content[endIndex] === '\n' || content[endIndex] === '\r')) {
+    endIndex += 1;
+    // Stop after consuming up to one blank line (two newlines).
+    if (endIndex - match.endIndex >= 2) break;
+  }
+
+  const modifiedContent = content.slice(0, match.startIndex) + content.slice(endIndex);
+  return {
+    success: true,
+    modifiedContent,
+    explanation: 'Removed carousel block.',
+  };
+}
+
+/**
+ * Suggest 2-4 placement candidates for repositioning the carousel near the
+ * end of the article. Reuses the standard PlacementOption shape so the same
+ * PlacementPicker UI handles the choice.
+ *
+ * Candidates (in priority order):
+ *   1. Above Related Reading section, when one exists. This is the right call
+ *      ~95% of the time so it leads when present.
+ *   2. End of content (true bottom)
+ *   3. Before the last heading
+ *   4. After the second-to-last heading
+ */
+export function findCarouselPlacements(content: string, limit = 4): PlacementOption[] {
+  const blocks = parseBlocks(content);
+  const headings = blocks.filter(
+    (b) => b.type === 'heading' || b.type === 'core/heading',
+  );
+
+  const options: PlacementOption[] = [];
+
+  // 1. Above Related Reading section if it exists (preferred placement)
+  const relatedReading = blocks.find((b) => {
+    const label = labelTextFor(b);
+    return label !== null && isRelatedReadingLabelText(label);
+  });
+  if (relatedReading) {
+    const labelText = labelTextFor(relatedReading) ?? 'Related Reading';
+    options.push({
+      snippet: labelText,
+      position: 'before',
+      label: `Above "${truncate(labelText, 60)}" section (recommended)`,
+      score: 1,
+      insertAt: relatedReading.startIndex,
+    });
+  }
+
+  // 2. True end of article
+  options.push({
+    snippet: 'End of article',
+    position: 'after',
+    label: relatedReading
+      ? 'At the very end of the article'
+      : 'At the end of the article (recommended for MOVE_TO_BOTTOM)',
+    score: relatedReading ? 0.7 : 1,
+    insertAt: content.length,
+  });
+
+  // 3. Before the last heading (so carousel sits above e.g. "Conclusion")
+  // Skip when this would duplicate the Related Reading option.
+  if (headings.length >= 1) {
+    const last = headings[headings.length - 1]!;
+    if (!relatedReading || last.startIndex !== relatedReading.startIndex) {
+      const headingText = headingPlainText(last.fullMarkup);
+      options.push({
+        snippet: headingText,
+        position: 'before',
+        label: `Before final heading: "${truncate(headingText, 80)}"`,
+        score: 0.85,
+        insertAt: last.startIndex,
+      });
+    }
+  }
+
+  // 4. After the second-to-last heading (penultimate section)
+  if (headings.length >= 2) {
+    const penult = headings[headings.length - 2]!;
+    const headingText = headingPlainText(penult.fullMarkup);
+    options.push({
+      snippet: headingText,
+      position: 'after',
+      label: `Below penultimate heading: "${truncate(headingText, 80)}"`,
+      score: 0.6,
+      insertAt: penult.endIndex,
+    });
+  }
+
+  return options.slice(0, limit);
+}
+
+export interface MoveCarouselOptions {
+  /** Optional bold subheading inserted as a paragraph block right above the carousel. */
+  subheading?: string;
+}
+
+/**
+ * Move the existing carousel block to the chosen placement (or the bottom if
+ * no placement is given). Removes the original location first, then inserts
+ * the same markup at the destination.
+ *
+ * If `options.subheading` is a non-empty trimmed string, prepend a paragraph
+ * block (`<p><strong>...</strong></p>`) right before the carousel for flow.
+ *
+ * If the destination offset sits inside the original block range, fall back
+ * to inserting at the end of content so we never produce nested or duplicate
+ * shortcodes.
+ */
+export function moveCarouselToBottom(
+  content: string,
+  placement?: PlacementOption,
+  options?: MoveCarouselOptions,
+): ApplyResult {
+  const match = findCarouselBlock(content);
+  if (!match) {
+    return {
+      success: false,
+      modifiedContent: content,
+      explanation: 'No carousel block found to move.',
+    };
+  }
+
+  const removeResult = removeCarouselBlock(content);
+  if (!removeResult.success) return removeResult;
+
+  const removedShift = content.length - removeResult.modifiedContent.length;
+
+  // Translate the placement's insertAt to the post-removal coordinate space.
+  let insertAt: number;
+  if (placement) {
+    if (placement.insertAt <= match.startIndex) {
+      insertAt = placement.insertAt;
+    } else if (placement.insertAt >= match.endIndex) {
+      insertAt = placement.insertAt - removedShift;
+    } else {
+      // Inside the original block — fall back to end of content
+      insertAt = removeResult.modifiedContent.length;
+    }
+  } else {
+    insertAt = removeResult.modifiedContent.length;
+  }
+
+  insertAt = Math.max(0, Math.min(insertAt, removeResult.modifiedContent.length));
+
+  const carouselMarkup = match.markup.replace(/^\s+|\s+$/g, '');
+  const subheadingMarkup = buildSubheadingBlock(options?.subheading);
+  const blockToInsert = subheadingMarkup
+    ? `\n\n${subheadingMarkup}\n\n${carouselMarkup}\n\n`
+    : `\n\n${carouselMarkup}\n\n`;
+
+  const modifiedContent =
+    removeResult.modifiedContent.slice(0, insertAt) +
+    blockToInsert +
+    removeResult.modifiedContent.slice(insertAt);
+
+  return {
+    success: true,
+    modifiedContent,
+    explanation: placement
+      ? `Moved carousel to: ${placement.label}${subheadingMarkup ? ' (with subheading)' : ''}`
+      : `Moved carousel to the end of the article${subheadingMarkup ? ' (with subheading)' : ''}.`,
+  };
+}
+
+/**
+ * Build a `<!-- wp:paragraph --><p><strong>...</strong></p><!-- /wp:paragraph -->`
+ * block from the user-supplied label. Returns null when the label is blank or
+ * whitespace-only. HTML-escapes the text so user-supplied special characters
+ * don't break the block markup.
+ */
+function buildSubheadingBlock(raw: string | undefined): string | null {
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) return null;
+  const escaped = trimmed
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  return `<!-- wp:paragraph -->\n<p><strong>${escaped}</strong></p>\n<!-- /wp:paragraph -->`;
+}
+
+function headingPlainText(markup: string): string {
+  const inner = markup.match(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i);
+  const raw = inner ? inner[1]! : markup;
+  return raw.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function truncate(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
