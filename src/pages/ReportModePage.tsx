@@ -699,6 +699,7 @@ export function ReportModePage({ onSwitchToEditor: _onSwitchToEditor }: ReportMo
                         handleUpdateRecStatus(selectedArticle.id, index, status)
                       }
                       renderedHtml={contentData?.content.rendered}
+                      rawContent={currentContent}
                       wpPostId={wpPostId}
                       carouselStatus={carouselStatuses[selectedArticle.id] ?? 'pending'}
                       onApplyCarouselMove={handleApplyCarouselMove}

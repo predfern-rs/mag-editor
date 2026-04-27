@@ -5,7 +5,15 @@ import { renderPreviewHtml } from '../../lib/preview-html';
 interface ContentPreviewModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /** WordPress's rendered HTML (shortcodes expanded, block comments stripped). */
   html: string;
+  /**
+   * Raw Gutenberg block markup. When present and it contains `wp:` block
+   * comments, we use this so ACF custom blocks can be surfaced as visible
+   * placeholder cards. Without it the rendered html drops ACF blocks
+   * entirely (they're self-closing comments with no inner HTML).
+   */
+  rawContent?: string;
   title: string;
   slug: string;
   /** Legacy single URL — used if articleUrls not provided */
@@ -18,12 +26,22 @@ export function ContentPreviewModal({
   isOpen,
   onClose,
   html,
+  rawContent,
   title,
   slug,
   liveUrl,
   articleUrls,
 }: ContentPreviewModalProps) {
-  const renderedHtml = useMemo(() => (isOpen ? renderPreviewHtml(html) : ''), [html, isOpen]);
+  const renderedHtml = useMemo(() => {
+    if (!isOpen) return '';
+    // Prefer the raw block markup when available — it carries the wp:acf
+    // comments we need to render placeholders. Fall back to whatever the
+    // rendered HTML is when raw isn't supplied.
+    if (rawContent && /<!--\s*wp:/i.test(rawContent)) {
+      return renderPreviewHtml(rawContent);
+    }
+    return renderPreviewHtml(html);
+  }, [html, rawContent, isOpen]);
 
   if (!isOpen) return null;
 

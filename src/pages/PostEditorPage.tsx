@@ -247,6 +247,7 @@ export function PostEditorPage({ postIdOverride }: PostEditorPageProps) {
         isOpen={previewOpen}
         onClose={() => setPreviewOpen(false)}
         html={renderedHtml}
+        rawContent={currentContent}
         title={post.title.rendered}
         slug={post.slug}
         articleUrls={getArticleUrls(getActiveSite().id, 'en', post.slug, post.link)}

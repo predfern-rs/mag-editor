@@ -28,6 +28,8 @@ interface ArticleRecommendationsProps {
   recommendationStatuses: Record<number, RecStatus>;
   onUpdateRecStatus: (index: number, status: 'applied' | 'skipped') => void;
   renderedHtml?: string;
+  /** Raw Gutenberg block markup, used so ACF placeholders show in the article preview. */
+  rawContent?: string;
   wpPostId?: number;
   // Carousel handlers — only used when article.carousel is defined (v2 reports).
   carouselStatus?: CarouselStatus;
@@ -88,6 +90,7 @@ export function ArticleRecommendations({
   recommendationStatuses,
   onUpdateRecStatus,
   renderedHtml,
+  rawContent,
   wpPostId,
   carouselStatus = 'pending',
   onApplyCarouselMove,
@@ -289,6 +292,7 @@ export function ArticleRecommendations({
         isOpen={previewOpen}
         onClose={() => setPreviewOpen(false)}
         html={renderedHtml || '<p class="text-gray-400">Loading article content...</p>'}
+        rawContent={rawContent}
         title={article.title}
         slug={slug}
         articleUrls={(() => {
