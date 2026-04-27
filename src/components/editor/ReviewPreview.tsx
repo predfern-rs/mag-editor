@@ -1,5 +1,6 @@
 import { useMemo, useEffect, useRef } from 'react';
 import type { LinkRecommendation } from '../../lib/report-parser';
+import { parseBlocks } from '../../lib/block-parser';
 
 interface ReviewPreviewProps {
   newContent: string;
@@ -10,8 +11,61 @@ interface ReviewPreviewProps {
   scrollToRec?: LinkRecommendation | null;
 }
 
-function stripBlockComments(content: string): string {
-  return content
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
+ * Render the article content for review. Strips wp:* block comments so the
+ * editor markup doesn't leak through, but converts ACF custom blocks (which
+ * are self-closing comments with no inner HTML) into visible placeholder
+ * cards. Without those placeholders the user can't tell whether a moved
+ * shortcode landed above or below an ACF FAQ / callout / etc.
+ */
+function renderPreviewHtml(content: string): string {
+  const blocks = parseBlocks(content);
+  if (blocks.length === 0) return content.trim();
+
+  const out: string[] = [];
+  let cursor = 0;
+
+  for (const block of blocks) {
+    if (block.startIndex > cursor) {
+      out.push(content.slice(cursor, block.startIndex));
+    }
+
+    if (block.isAcf) {
+      const typeLabel = escapeHtml(block.type.replace(/^acf\//, ''));
+      const summary = escapeHtml(block.label || typeLabel);
+      // Render a styled placeholder so the user can see where the ACF block
+      // sits relative to surrounding paragraphs.
+      out.push(
+        `<aside class="acf-placeholder" data-acf-type="${typeLabel}">` +
+          `<span class="acf-placeholder__tag">ACF block</span>` +
+          `<span class="acf-placeholder__type">${typeLabel}</span>` +
+          (summary && summary !== typeLabel
+            ? `<span class="acf-placeholder__summary">${summary}</span>`
+            : '') +
+          `</aside>`,
+      );
+    } else {
+      // Strip the opening + closing block comments and keep the inner HTML.
+      out.push(stripBlockCommentsForBlock(block.fullMarkup));
+    }
+    cursor = block.endIndex;
+  }
+  if (cursor < content.length) {
+    out.push(content.slice(cursor));
+  }
+
+  return out.join('').trim();
+}
+
+function stripBlockCommentsForBlock(blockMarkup: string): string {
+  return blockMarkup
     .replace(/<!--\s*wp:\S+[\s\S]*?-->/g, '')
     .replace(/<!--\s*\/wp:\S+\s*-->/g, '')
     .trim();
@@ -26,7 +80,7 @@ export function ReviewPreview({
 }: ReviewPreviewProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const cleanHtml = useMemo(
-    () => (isOpen ? stripBlockComments(newContent) : ''),
+    () => (isOpen ? renderPreviewHtml(newContent) : ''),
     [newContent, isOpen],
   );
 

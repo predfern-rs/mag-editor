@@ -462,6 +462,27 @@ describe('findCarouselPlacements', () => {
     expect(opts[0]!.label.toLowerCase()).toContain('related reading');
   });
 
+  it('end-of-article placement lands AFTER trailing ACF blocks', () => {
+    const acfFaq = '<!-- wp:acf/faq {"name":"acf/faq","data":{"title":"Frequently asked"},"mode":"preview"} /-->';
+    const acfCta = '<!-- wp:acf/cta {"name":"acf/cta","data":{"heading":"Buy now"},"mode":"preview"} /-->';
+    // Realistic flow: carousel currently at TOP, ACF blocks at the very end.
+    const carouselSource = `${CAROUSEL_BLOCK}\n\n${ARTICLE_HEAD}\n\n${ARTICLE_TAIL}\n\n${acfFaq}\n\n${acfCta}`;
+    const opts = findCarouselPlacements(carouselSource);
+    const endOption = opts.find((o) => o.snippet === 'End of article');
+    expect(endOption).toBeDefined();
+    expect(endOption!.insertAt).toBe(carouselSource.length);
+    // Label should mention the trailing ACF count so the user can confirm.
+    expect(endOption!.label).toContain('2 ACF block');
+    const result = moveCarouselToBottom(carouselSource, endOption);
+    expect(result.success).toBe(true);
+    const moved = result.modifiedContent;
+    const faqIdx = moved.indexOf('acf/faq');
+    const ctaIdx = moved.indexOf('acf/cta');
+    const carouselIdx = moved.indexOf('global_carousel_people_list');
+    expect(faqIdx).toBeLessThan(carouselIdx);
+    expect(ctaIdx).toBeLessThan(carouselIdx);
+  });
+
   // Localised Related Reading section markers — Ridestore caters to 9 langs.
   const LOCALISED_HEADINGS: Array<[string, string]> = [
     ['IT', 'Letture correlate'],

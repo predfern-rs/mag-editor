@@ -964,7 +964,8 @@ export function removeCarouselBlock(content: string): ApplyResult {
  * Candidates (in priority order):
  *   1. Above Related Reading section, when one exists. This is the right call
  *      ~95% of the time so it leads when present.
- *   2. End of content (true bottom)
+ *   2. After all trailing ACF blocks (FAQ, callouts, etc.) so the carousel
+ *      doesn't end up wedged between the prose and a structural ACF block.
  *   3. Before the last heading
  *   4. After the second-to-last heading
  */
@@ -992,13 +993,21 @@ export function findCarouselPlacements(content: string, limit = 4): PlacementOpt
     });
   }
 
-  // 2. True end of article
+  // 2. End of article — must land BELOW any trailing ACF blocks so the
+  // carousel doesn't get wedged between the prose and a structural ACF block
+  // (FAQ, callout, related-products, etc). content.length is already past
+  // every block; we just label the option with the trailing-ACF count so
+  // the user knows it accounts for them.
+  const trailingAcfCount = countTrailingAcfBlocks(blocks);
+  const trailingNote = trailingAcfCount > 0
+    ? ` — below ${trailingAcfCount} ACF block${trailingAcfCount === 1 ? '' : 's'}`
+    : '';
   options.push({
     snippet: 'End of article',
     position: 'after',
     label: relatedReading
-      ? 'At the very end of the article'
-      : 'At the end of the article (recommended for MOVE_TO_BOTTOM)',
+      ? `At the very end of the article${trailingNote}`
+      : `At the end of the article${trailingNote}${trailingAcfCount === 0 ? ' (recommended for MOVE_TO_BOTTOM)' : ''}`,
     score: relatedReading ? 0.7 : 1,
     insertAt: content.length,
   });
@@ -1132,4 +1141,18 @@ function headingPlainText(markup: string): string {
 
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+/**
+ * Count the run of ACF blocks at the very end of the article. Used purely to
+ * label the "End of article" placement so the user can confirm the carousel
+ * will sit below any structural ACF blocks (FAQ, callout, etc).
+ */
+function countTrailingAcfBlocks(blocks: ReturnType<typeof parseBlocks>): number {
+  let count = 0;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    if (blocks[i]!.isAcf) count += 1;
+    else break;
+  }
+  return count;
 }
