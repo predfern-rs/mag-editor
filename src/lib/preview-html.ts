@@ -28,6 +28,12 @@ export function renderPreviewHtml(content: string): string {
   let cursor = 0;
 
   for (const block of blocks) {
+    // Skip nested blocks (e.g. wp:list-item inside wp:list). The parent
+    // block's stripped markup already contains them, so re-emitting would
+    // duplicate the content AND leave stray closing tags from the parent
+    // that were never re-emitted as a gap.
+    if (block.startIndex < cursor) continue;
+
     if (block.startIndex > cursor) {
       out.push(content.slice(cursor, block.startIndex));
     }
