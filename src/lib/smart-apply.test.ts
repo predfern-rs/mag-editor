@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   applyRecommendation,
+  applyAtPlacement,
   normalize,
   extractSignificantWords,
   extractSentenceHtml,
@@ -316,6 +317,79 @@ describe('removeAddedLinkInstance', () => {
     const current = '<p>None.</p><p><a href="/x">A</a> and <a href="/x">B</a>.</p>';
     const result = removeAddedLinkInstance(current, before, '/x');
     expect(result).toBe('<p>None.</p><p> and <a href="/x">B</a>.</p>');
+  });
+});
+
+// ── applyAtPlacement: anchor-wrapping fallback ──────────────────────
+
+describe('applyAtPlacement anchor wrapping', () => {
+  const baseContent = '<!-- wp:paragraph -->\n<p>Existing body.</p>\n<!-- /wp:paragraph -->';
+  const placement = { snippet: 's', position: 'after' as const, label: 'l', score: 1, insertAt: baseContent.length };
+
+  it('expands markdown [anchor](url) into an <a> tag', () => {
+    const rec: LinkRecommendation = {
+      action: 'add',
+      section: 'article',
+      anchor: 'come vestirsi sulla neve',
+      targetUrl: 'https://www.ridestore.com/it/mag/come-vestirsi-sulla-neve/',
+      reason: '',
+      suggestedSentence: 'Sapere [come vestirsi sulla neve](https://www.ridestore.com/it/mag/come-vestirsi-sulla-neve/) è importante.',
+    };
+    const result = applyAtPlacement(rec, baseContent, placement);
+    expect(result.success).toBe(true);
+    expect(result.modifiedContent).toContain('<a href="https://www.ridestore.com/it/mag/come-vestirsi-sulla-neve/">come vestirsi sulla neve</a>');
+  });
+
+  it('wraps the literal anchor text when the suggested sentence has no markdown link', () => {
+    // This is the WP Post #46510 case from the v2 IT report — the report
+    // wrote the anchor as plain prose, not as `[anchor](url)`. The applier
+    // must still produce a clickable link.
+    const rec: LinkRecommendation = {
+      action: 'add',
+      section: 'article',
+      anchor: 'come vestirsi sulla neve',
+      targetUrl: 'https://www.ridestore.com/it/mag/come-vestirsi-sulla-neve/',
+      reason: 'Intro',
+      suggestedSentence: 'Se vuoi prima una panoramica completa su come vestirsi sulla neve in ogni stagione, consulta la nostra guida generale prima di approfondire i consigli primaverili.',
+    };
+    const result = applyAtPlacement(rec, baseContent, placement);
+    expect(result.success).toBe(true);
+    expect(result.modifiedContent).toContain(
+      '<a href="https://www.ridestore.com/it/mag/come-vestirsi-sulla-neve/">come vestirsi sulla neve</a>',
+    );
+    // The wrapping must replace the FIRST occurrence only, not duplicate text
+    const occurrences = (result.modifiedContent.match(/come vestirsi sulla neve/g) || []).length;
+    expect(occurrences).toBe(1);
+  });
+
+  it('inserts the sentence unchanged when neither markdown nor plain anchor is found', () => {
+    const rec: LinkRecommendation = {
+      action: 'add',
+      section: 'article',
+      anchor: 'something missing',
+      targetUrl: 'https://example.com/',
+      reason: '',
+      suggestedSentence: 'A paraphrased sentence with no obvious anchor.',
+    };
+    const result = applyAtPlacement(rec, baseContent, placement);
+    expect(result.success).toBe(true);
+    // Sentence still inserted, just without the anchor wrap
+    expect(result.modifiedContent).toContain('A paraphrased sentence');
+    expect(result.modifiedContent).not.toContain('<a href=');
+  });
+
+  it('escapes regex metacharacters in the anchor when wrapping plain text', () => {
+    const rec: LinkRecommendation = {
+      action: 'add',
+      section: 'article',
+      anchor: 'jackets (women)',
+      targetUrl: 'https://example.com/jackets/',
+      reason: '',
+      suggestedSentence: 'Browse our jackets (women) for all conditions.',
+    };
+    const result = applyAtPlacement(rec, baseContent, placement);
+    expect(result.success).toBe(true);
+    expect(result.modifiedContent).toContain('<a href="https://example.com/jackets/">jackets (women)</a>');
   });
 });
 

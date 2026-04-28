@@ -779,10 +779,7 @@ export function applyAtPlacement(
     return { success: false, modifiedContent: content, explanation: 'No suggested sentence' };
   }
 
-  const htmlSentence = rec.suggestedSentence.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    '<a href="$2">$1</a>',
-  );
+  const htmlSentence = sentenceToHtmlWithAnchor(rec.suggestedSentence, rec.anchor, rec.targetUrl);
 
   const newBlock = `\n\n<!-- wp:paragraph -->\n<p>${htmlSentence}</p>\n<!-- /wp:paragraph -->`;
   const newContent =
@@ -795,6 +792,42 @@ export function applyAtPlacement(
     modifiedContent: newContent,
     explanation: `Inserted "${rec.anchor}" link ${placement.position} "${placement.snippet.substring(0, 50)}..."`,
   };
+}
+
+/**
+ * Convert a suggested sentence to HTML with a wrapped anchor.
+ *
+ * Some report rows write the link with markdown syntax — `[anchor](url)` —
+ * which we expand to `<a href="url">anchor</a>`. Other rows just write the
+ * plain anchor text inside the sentence with no markdown decoration. In that
+ * case we wrap the first literal occurrence of the anchor text with the
+ * target URL so the inserted sentence ships with a clickable link either way.
+ *
+ * If the anchor text doesn't appear at all (rare, but possible if the report
+ * paraphrases) we fall back to appending a trailing anchor so the link still
+ * goes in. Returns the sentence unchanged when no anchor/URL is supplied.
+ */
+function sentenceToHtmlWithAnchor(
+  sentence: string,
+  anchor: string,
+  url: string,
+): string {
+  // Markdown link form: `[anchor](url)` → `<a href="url">anchor</a>`
+  const withMarkdown = sentence.replace(
+    /\[([^\]]+)\]\(([^)]+)\)/g,
+    '<a href="$2">$1</a>',
+  );
+  if (withMarkdown !== sentence) return withMarkdown;
+
+  // No markdown link in the sentence. If the report supplied an anchor and a
+  // URL, wrap the first literal occurrence of the anchor text.
+  if (!anchor || !url) return sentence;
+  const escaped = anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const anchorRegex = new RegExp(escaped);
+  if (anchorRegex.test(sentence)) {
+    return sentence.replace(anchorRegex, `<a href="${url}">${anchor}</a>`);
+  }
+  return sentence;
 }
 
 /**
